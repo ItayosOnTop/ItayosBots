@@ -76,7 +76,14 @@ function handleCommand(message, source, sender, botInstance = null) {
   const commandName = commandParts[0];
   const subCommand = commandParts.length > 1 ? commandParts[1] : null;
   
-  const args = parts.slice(1);
+  let args = parts.slice(1);
+  
+  // Check if this is a targeted command
+  let targetBot = null;
+  if (args.length > 0 && botInstance && args[0] !== botInstance.bot.username) {
+    // Check if the first argument could be a bot name
+    targetBot = args[0];
+  }
   
   // Check if it's a registered global command
   if (commands.has(commandName)) {
@@ -86,7 +93,7 @@ function handleCommand(message, source, sender, botInstance = null) {
   
   // If not a global command and we have a bot instance, try bot-specific commands
   if (botInstance && typeof botInstance.handleCommand === 'function') {
-    return botInstance.handleCommand(commandName, args, subCommand);
+    return botInstance.handleCommand(commandName, args, targetBot);
   }
   
   // Command not found

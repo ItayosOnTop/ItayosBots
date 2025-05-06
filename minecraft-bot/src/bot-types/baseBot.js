@@ -657,10 +657,16 @@ class BaseBot {
    * Handle a command directed at this bot
    * @param {string} command - Command name
    * @param {Array} args - Command arguments
-   * @returns {*} - Command response
+   * @param {string} [targetBot] - Optional target bot username
+   * @returns {*} - Command response or null if command not applicable to this bot
    */
-  handleCommand(command, args) {
-    // Basic commands that all bots should support
+  handleCommand(command, args, targetBot = null) {
+    // If a target is specified and it's not this bot, don't respond
+    if (targetBot && targetBot !== this.bot.username) {
+      return null;
+    }
+
+    // Global commands that all bots should support
     switch (command) {
       case 'status':
         return this.getStatus();
@@ -712,8 +718,9 @@ class BaseBot {
         }
         
       default:
-        // If not a base command, it should be handled by the subclass
-        return `Unknown command: ${command}`;
+        // For base class, we don't know type-specific commands
+        // Return null instead of error message to avoid "unknown command" responses for valid commands of other types
+        return null;
     }
   }
   

@@ -630,9 +630,29 @@ class ProtectorBot extends BaseBot {
    * Handle a command directed at this protector bot
    * @param {string} command - Command name
    * @param {Array} args - Command arguments
-   * @returns {*} - Command response
+   * @param {string} [targetBot] - Optional target bot username
+   * @returns {*} - Command response or null if command not applicable to this bot
    */
-  handleCommand(command, args) {
+  handleCommand(command, args, targetBot = null) {
+    // First check global commands via parent class
+    const baseResponse = super.handleCommand(command, args, targetBot);
+    if (baseResponse !== null) {
+      return baseResponse;
+    }
+    
+    // If a target is specified and it's not this bot, don't respond
+    if (targetBot && targetBot !== this.bot.username) {
+      return null;
+    }
+    
+    // Protector-specific commands
+    const protectorCommands = ['guard', 'patrol'];
+    
+    // If not a protector command, don't respond
+    if (!protectorCommands.includes(command)) {
+      return null;
+    }
+
     // Check for protector-specific commands
     switch (command) {
       case 'guard':
@@ -686,8 +706,7 @@ class ProtectorBot extends BaseBot {
         }
       
       default:
-        // If not a protector command, try base commands
-        return super.handleCommand(command, args);
+        return null;
     }
   }
 

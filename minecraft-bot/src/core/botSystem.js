@@ -163,29 +163,79 @@ function handleCommand(command, source, sender, configObj) {
   const args = parts.slice(1);
   
   // Handle system-wide commands
-  switch (cmd) {
-    case 'help':
-      return getHelpText(args[0], cfg);
-    case 'list':
-      return listBots();
-    case 'stop':
-      return args.length > 0 ? stopBot(args[0]) : stopAllBots();
-    // Add more system commands here
+  if (cmd === 'help') {
+    return getHelpText(args[0], cfg);
   }
-  
-  // Route command to specific bot(s)
-  const targetBot = args.length > 0 && activeBots.has(args[0]) ? args[0] : null;
-  
-  if (targetBot) {
-    // Command targeted at a specific bot
-    const { instance } = activeBots.get(targetBot);
-    instance.handleCommand(cmd, args.slice(1));
-  } else {
-    // Command for all bots or a specific type
-    for (const [_, { instance }] of activeBots) {
-      instance.handleCommand(cmd, args);
+  else if (cmd === 'list') {
+    // Check if list targets a specific bot
+    return args.length > 0 ? listBots(args[0]) : listBots();
+  }
+  else if (cmd === 'stop') {
+    return args.length > 0 ? stopBot(args[0]) : stopAllBots();
+  }
+  else if (cmd === 'status' || cmd === 'goto' || cmd === 'come') {
+    // These are global commands that may target specific bots
+    
+    // Check if a target bot is specified
+    const targetBot = args.length > 0 ? args[0] : null;
+    
+    if (targetBot && activeBots.has(targetBot)) {
+      // Command targeted at a specific bot
+      const { instance } = activeBots.get(targetBot);
+      const response = instance.handleCommand(cmd, args.slice(1), targetBot);
+      
+      // Return the response or a fallback message
+      return response || `Command ${cmd} sent to ${targetBot}`;
+    } else {
+      // Send to all bots, collect responses
+      const responses = [];
+      
+      for (const [botName, { instance }] of activeBots) {
+        const response = instance.handleCommand(cmd, args, null);
+        if (response) {
+          responses.push(`${botName}: ${response}`);
+        }
+      }
+      
+      return responses.length > 0 ? responses.join('\n') : 'No bot responses received';
     }
   }
+  
+  // For bot-specific commands (mine, guard, buildwall, etc.)
+  const responses = [];
+  let validCommand = false;
+  
+  // Try sending to all bots - only the one that recognizes the command will respond
+  for (const [botName, { instance }] of activeBots) {
+    // If a target bot is specified, only send to that bot
+    if (args.length > 0 && args[0] === botName) {
+      const response = instance.handleCommand(cmd, args.slice(1), botName);
+      if (response) {
+        return `${botName}: ${response}`;
+      }
+      return `Command ${cmd} sent to ${botName}`;
+    }
+    
+    // If no target specified, send to all bots
+    if (args.length === 0 || !activeBots.has(args[0])) {
+      const response = instance.handleCommand(cmd, args, null);
+      if (response) {
+        validCommand = true;
+        responses.push(`${botName}: ${response}`);
+      }
+    }
+  }
+  
+  if (responses.length > 0) {
+    return responses.join('\n');
+  }
+  
+  // If we reached here, no bot recognized the command
+  if (!validCommand) {
+    return `Unknown command: ${cmd}. Type ${prefix}help for assistance.`;
+  }
+  
+  return null;
 }
 
 /**
@@ -251,8 +301,10 @@ function getHelpText(command, config) {
 
 /**
  * List all active bots and their status
+ * @param {string} [targetBot] - Optional specific bot to list
+ * @returns {string} - Formatted bot list
  */
-function listBots() {
+function listBots(targetBot = null) {
   if (activeBots.size === 0) {
     return "No bots are currently active.";
   }
@@ -260,12 +312,20 @@ function listBots() {
   const botList = [];
   
   for (const [name, { instance, config }] of activeBots) {
+    // Skip if a specific bot was requested and this isn't it
+    if (targetBot && name !== targetBot) continue;
+    
     const status = instance.getStatus();
     botList.push({
       name,
       type: config.type,
       status: status,
     });
+  }
+  
+  // If specific bot was requested but not found
+  if (targetBot && botList.length === 0) {
+    return `Bot '${targetBot}' not found.`;
   }
   
   // Format the output nicely for Discord
