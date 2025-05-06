@@ -16,19 +16,29 @@ const activeBots = new Map();
 // Shared data store for all bots
 let dataStore;
 
+// Let's declare a global config variable for the module
+let config;
+
 /**
  * Initialize and start the bot system
- * @param {Object} config - Configuration object
+ * @param {Object} configObj - Configuration object
  * @returns {Promise} - Resolves when bot system is ready
  */
-async function startBotSystem(config) {
+async function startBotSystem(configObj) {
   try {
+    // Store config globally for access by other functions
+    config = configObj;
+    
     // Initialize shared data store
     dataStore = createDataStore();
     
     // Setup Discord integration if enabled
     if (config.discord.enabled) {
-      await setupDiscord(config.discord, (command, source, sender) => handleCommand(command, source, sender, config));
+      await setupDiscord(
+        config.discord, 
+        (command, source, sender) => handleCommand(command, source, sender, config),
+        config.system.commandPrefix
+      );
       logger.info('Discord integration initialized');
     }
     
@@ -123,8 +133,8 @@ async function createBot(botConfig, globalConfig) {
  */
 function handleCommand(command, source, sender, config) {
   // Verify the sender is authorized
-  if (source === 'discord' && sender.id !== config.owner.discordId) {
-    return;
+  if (source === 'discord' && !sender.isOwner) {
+    return 'You are not authorized to control the bots.';
   }
   
   // Parse the command
@@ -134,6 +144,8 @@ function handleCommand(command, source, sender, config) {
   
   // Handle system-wide commands
   switch (cmd) {
+    case 'help':
+      return getHelpText(args[0], config);
     case 'list':
       return listBots();
     case 'stop':
@@ -157,20 +169,118 @@ function handleCommand(command, source, sender, config) {
 }
 
 /**
+ * Get help text for commands
+ * @param {string} command - Specific command to get help for
+ * @param {Object} config - Global configuration
+ * @returns {string} - Help text
+ */
+function getHelpText(command, config) {
+  const prefix = config.system.commandPrefix;
+  
+  const generalHelp = [
+    '**ItayosBot Command Help**',
+    '',
+    '**Global Commands:**',
+    `\`${prefix}help [command]\` - Show this help message`,
+    `\`${prefix}list\` - List all active bots and their status`,
+    `\`${prefix}stop [bot_name]\` - Stop all bots or a specific bot`,
+    `\`${prefix}goto [bot_name] [x] [y] [z]\` - Command bot(s) to move to coordinates`,
+    `\`${prefix}come [bot_name]\` - Command bot(s) to come to your location`,
+    `\`${prefix}status [bot_name]\` - Get detailed status of bot(s)`,
+    '',
+    '**Bot Type-Specific Commands:**',
+    `For Miner bot: mine, collect, store, craft, findore, minearea`,
+    `For Builder bot: build, repair, terraform, place, buildwall, blueprint`,
+    `For Protector bot: guard, patrol, attack, defend, retreat, equip`,
+    '',
+    `Use \`${prefix}help [command]\` for details on a specific command.`
+  ].join('\n');
+
+  // If no specific command, return general help
+  if (!command) {
+    return generalHelp;
+  }
+
+  // Help text for specific commands
+  const helpTexts = {
+    // Global commands
+    'help': `Usage: ${prefix}help [command]\nShow help information for commands.`,
+    'list': `Usage: ${prefix}list\nList all active bots and their status.`,
+    'stop': `Usage: ${prefix}stop [bot_name]\nStop all bots or a specific bot.`,
+    'goto': `Usage: ${prefix}goto [bot_name] [x] [y] [z]\nCommand bot(s) to move to specific coordinates.`,
+    'come': `Usage: ${prefix}come [bot_name]\nCommand bot(s) to come to your location.`,
+    'status': `Usage: ${prefix}status [bot_name]\nGet detailed status of bot(s).`,
+    
+    // Miner commands
+    'mine': `Usage: ${prefix}mine [block_type] [count]\nMine specific blocks until count reached.`,
+    'collect': `Usage: ${prefix}collect [item_type] [count]\nCollect specific items like plants or drops.`,
+    'store': `Usage: ${prefix}store [item] [chest_name]\nStore items in a specific container.`,
+    'craft': `Usage: ${prefix}craft [item] [count]\nCraft a specific item.`,
+    'findore': `Usage: ${prefix}findore [ore_type]\nLocate nearest ore of specified type.`,
+    
+    // Builder commands
+    'build': `Usage: ${prefix}build [schematic_name] [x] [y] [z] [rotation]\nBuild schematic at location.`,
+    'place': `Usage: ${prefix}place [block_type] [x] [y] [z]\nPlace specific block at location.`,
+    'buildwall': `Usage: ${prefix}buildwall [block_type] [height] [x1] [z1] [x2] [z2]\nBuild wall between points.`,
+    
+    // Protector commands
+    'guard': `Usage: ${prefix}guard [x] [y] [z] or [player_name]\nGuard location or player.`,
+    'patrol': `Usage: ${prefix}patrol [x1] [z1] [x2] [z2]\nPatrol rectangular area.`,
+    'attack': `Usage: ${prefix}attack [mob_type/player_name]\nAttack specific targets.`,
+  };
+
+  return helpTexts[command] || `No help available for command: ${command}`;
+}
+
+/**
  * List all active bots and their status
  */
 function listBots() {
+  if (activeBots.size === 0) {
+    return "No bots are currently active.";
+  }
+
   const botList = [];
   
   for (const [name, { instance, config }] of activeBots) {
+    const status = instance.getStatus();
     botList.push({
       name,
       type: config.type,
-      status: instance.getStatus(),
+      status: status,
     });
   }
   
-  return botList;
+  // Format the output nicely for Discord
+  const formattedList = [
+    '**Active Bots:**',
+    ''
+  ];
+
+  for (const bot of botList) {
+    const health = bot.status.health !== undefined ? `❤️ ${bot.status.health}` : '';
+    const task = bot.status.currentTask ? `🔄 ${bot.status.currentTask}` : '🔄 Idle';
+    const position = bot.status.position ? 
+      `📍 ${Math.floor(bot.status.position.x)},${Math.floor(bot.status.position.y)},${Math.floor(bot.status.position.z)}` : '';
+    
+    formattedList.push(`**${bot.name}** (${bot.type}) - ${health} ${task} ${position}`);
+    
+    // Add type-specific details
+    if (bot.type === 'miner' && bot.status.miningTarget) {
+      formattedList.push(`   Mining: ${bot.status.miningTarget.blockType} (${bot.status.miningTarget.count})`);
+    }
+    else if (bot.type === 'builder' && bot.status.buildTarget) {
+      formattedList.push(`   Building: ${bot.status.buildTarget.schematicName}`);
+    }
+    else if (bot.type === 'protector' && bot.status.guardTarget) {
+      const target = bot.status.guardTarget.type === 'player' ? 
+        `Player: ${bot.status.guardTarget.username}` : 
+        `Location: ${bot.status.guardTarget.x},${bot.status.guardTarget.y},${bot.status.guardTarget.z}`;
+      formattedList.push(`   Guarding: ${target}`);
+    }
+  }
+  
+  return formattedList.join('\n');
 }
 
 /**
@@ -208,4 +318,5 @@ module.exports = {
   listBots,
   stopBot,
   stopAllBots,
+  getHelpText,
 }; 

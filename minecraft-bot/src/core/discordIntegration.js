@@ -8,16 +8,19 @@ const { logger } = require('../utils/logger');
 let client;
 let commandHandler;
 let config;
+let commandPrefix = '#'; // Default command prefix
 
 /**
  * Setup Discord bot integration
  * @param {Object} discordConfig - Discord configuration
  * @param {Function} cmdHandler - Function to handle commands
+ * @param {string} [prefix='#'] - Command prefix
  * @returns {Promise} - Resolves when Discord bot is ready
  */
-async function setupDiscord(discordConfig, cmdHandler) {
+async function setupDiscord(discordConfig, cmdHandler, prefix = '#') {
   config = discordConfig;
   commandHandler = cmdHandler;
+  commandPrefix = prefix;
   
   // Create Discord client with necessary intents
   client = new Client({
@@ -60,7 +63,6 @@ function setupEventHandlers() {
     if (message.channelId !== config.channelId) return;
     
     // Check if message starts with command prefix
-    const commandPrefix = config.system.commandPrefix || '#'; // Use the commandPrefix from config
     if (!message.content.startsWith(commandPrefix)) return;
     
     // Process the command
@@ -68,7 +70,7 @@ function setupEventHandlers() {
       const sender = {
         id: message.author.id,
         username: message.author.username,
-        isOwner: message.author.id === config.owner.discordId,
+        isOwner: message.author.id === config.discordId || config.ownerId,
       };
       
       // Pass command to handler
