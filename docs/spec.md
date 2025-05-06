@@ -1,136 +1,28 @@
-# Minecraft Bot System Specification
+this is a minecraft bot created in mineflayer
+the bot is capable of mininig, building from schematic, guard the player, and more
+the bot has commands like:
+    #come
+    #mine diamond_ore 64
+    #guard <x><y><z> / #guard <playerName>
+    #build <schematic_name>
+    and more commands
+the bot can be communicated trough discord and minecraft chat
+the bot will get command only from the bot owner (DiscordID, Minecraft username)
+the program can make "army" of bots, the bots will share data between them
+the bots will be splitted into 3 bots types: miner, builder, protector:
 
-## Project Overview
-This project aims to develop an autonomous Minecraft bot system using Mineflayer, with Discord integration for remote monitoring and control. The system will support resource gathering, building from schematics, security functions, and multi-bot coordination.
+    the miner type will mine and get the neccessary items and blocks for the schematic build, and put it all in chests, and share the data.
 
-## System Architecture
+    the builder type will build the schematic with the blocks and items the the miner type put in the chests
 
-### Core Components
-- **Bot Framework**: Built on Mineflayer for Minecraft interaction
-- **Command System**: Processes in-game and Discord commands
-- **Resource Management**: Handles gathering, storage, and utilization
-- **Building System**: Processes schematics and constructs structures
-- **Security Module**: Provides protection against threats
-- **Multi-Bot Coordinator**: Orchestrates multiple bots working together
-- **Discord Integration**: Enables remote monitoring and control
+    the protector type will protect the other types, himself, and specific player (specified by the bots owner) from any hostile mobs in a 50 blocks area.
 
-### Technology Stack
-- Node.js
-- Mineflayer (Minecraft bot library)
-- Discord.js (Discord API integration)
-- Custom pathfinding and decision-making algorithms
+the miner and builder bots can craft
+the miner and the builder bots at the beginning will go and mine stuff specific by the bots owner, and they will go and craft tools and armors and will put them in a chest, the other bots will come and get those tools and armors (like gettign wood and then tools and so on..)
+the command for that will be #start
 
-## Functional Requirements
+the bot owner could specifiy if he wants specific bot to do it or all of the bots
 
-### Phase 1: Project Setup
-- **Environment Configuration**: Node.js project with Mineflayer and Discord.js dependencies
-- **Configuration System**: JSON/YAML files for bot settings
-- **Connection Management**: Connect to and authenticate with Minecraft servers
-- **Discord Integration**: Bot presence in Discord with basic command reception
-
-### Phase 2: Core Bot Framework
-- **Movement System**: Pathfinding and basic navigation capabilities
-- **Inventory System**: Track, organize, and use inventory items
-- **Block Interaction**: Detect, mine, and place blocks
-- **Command Parsing**: Process text commands from chat
-- **Entity Detection**: Identify and track players and mobs
-- **Owner Authentication**: Secure bot control via authentication
-
-### Phase 3: Command System
-- **Command Architecture**: Modular, extensible command system
-- **Basic Commands**: Implement #come, #status, and other utility commands
-- **Permission Levels**: Different access levels for different users
-- **Feedback Mechanism**: Provide responses to command execution
-- **Help System**: Documentation for available commands
-- **Discord Mirroring**: Execute same commands from Discord and in-game
-
-### Phase 4: Resource Gathering
-- **Resource Identification**: Detect and prioritize valuable resources
-- **Mining Operations**: Efficient pathfinding and mining strategies
-- **Tool Selection**: Choose appropriate tools for each task
-- **Combat for Resources**: Fight mobs for specific drops
-- **Inventory Management**: Sort and store gathered resources
-- **Progress Tracking**: Monitor and report on resource collection
-
-### Phase 5: Schematic Processing
-- **Schematic Parsing**: Read and interpret schematic files
-- **Material Requirements**: Generate lists of needed materials
-- **Construction Algorithm**: Efficient block placement planning
-- **Validation System**: Verify correct structure building
-- **Progress Monitoring**: Track and report building progress
-- **Error Correction**: Identify and fix building mistakes
-
-### Phase 6: Multi-Bot Coordination
-- **Communication Protocol**: Bot-to-bot information sharing
-- **Role Assignment**: Specialized tasks for different bots
-- **Task Distribution**: Efficient allocation of work
-- **Shared Knowledge**: Centralized information accessible to all bots
-- **Collision Avoidance**: Prevent bots from interfering with each other
-- **Priority System**: Handle task importance and interruptions
-
-### Phase 7: Security System
-- **Threat Detection**: Identify hostile mobs and players
-- **Combat Tactics**: Strategies for different enemy types
-- **Perimeter Security**: Monitor and secure defined areas
-- **Alert System**: Notify about security threats
-- **Defense Formations**: Coordinated multi-bot defense
-- **Retreat Logic**: Strategic withdrawal when overwhelmed
-
-### Phase 8: Advanced Features
-- **Optimized Building**: High-efficiency construction algorithms
-- **Adaptive Resource Gathering**: Adjust to available resources
-- **Advanced Pathfinding**: Navigate complex terrain
-- **Failure Recovery**: Automatic recovery from errors
-- **Performance Monitoring**: Track and optimize bot performance
-- **State Persistence**: Maintain bot state between sessions
-- **Visual Reporting**: Share screenshots via Discord
-
-### Phase 9: Testing and Polish
-- **Test Scenarios**: Comprehensive testing in various situations
-- **Stress Testing**: Performance under load with multiple bots
-- **Optimization**: Memory and CPU usage improvements
-- **Bug Fixing**: Resolve identified issues
-- **Documentation**: Code documentation and API reference
-- **User Guide**: Instructions for command usage
-
-### Phase 10: Deployment
-- **Release Packaging**: Prepare system for distribution
-- **Installation Guide**: Documentation for setup process
-- **Version Control**: System for updates and versioning
-- **Usage Statistics**: Optional telemetry for system improvement
-- **Demonstrations**: Showcase of system capabilities
-- **Security**: Secure token system for Discord-Minecraft communication
-
-## Technical Specifications
-
-### Bot Connection Requirements
-- Support for Minecraft Java Edition servers
-- Authentication via Mojang accounts or Microsoft accounts
-- Configurable connection retry logic
-
-### Performance Requirements
-- Support for up to [X] simultaneous bot instances
-- Resource usage not to exceed [Y] memory per bot
-- Response time to commands under [Z] milliseconds
-
-### Security Requirements
-- Encrypted storage of authentication credentials
-- Command permission system with role-based access
-- Secure Discord-Minecraft communication channel
-
-### Discord Integration Specifications
-- Command mirroring between platforms
-- Resource and progress reporting
-- Screenshot sharing capability
-- Alert notifications for important events
-- Status monitoring dashboard
-
-## Implementation Timeline
-Implementation will follow the 10 phases outlined in the project plan, with each phase building upon the previous ones. Estimated timeline will be determined based on available resources and development capacity.
-
-## Success Criteria
-- Bots can successfully gather resources autonomously
-- Building system can construct structures from schematics with >95% accuracy
-- Multiple bots can coordinate without conflicts
-- Discord integration provides full remote control capability
-- System is stable and recovers from failures
+the bots will have the command:
+    #goto <botName> <x><y><z>
+    #goto <x><y><z> //for all of them
