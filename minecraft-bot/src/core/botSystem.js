@@ -210,9 +210,9 @@ function getHelpText(command, config) {
     `\`${prefix}status [bot_name]\` - Get detailed status of bot(s)`,
     '',
     '**Bot Type-Specific Commands:**',
-    `For Miner bot: mine, collect, store, craft, findore, minearea`,
-    `For Builder bot: build, repair, terraform, place, buildwall, blueprint`,
-    `For Protector bot: guard, patrol, attack, defend, retreat, equip`,
+    `For Miner bot: mine, store, minearea`,
+    `For Builder bot: buildwall, blueprint`,
+    `For Protector bot: guard, patrol`,
     '',
     `Use \`${prefix}help [command]\` for details on a specific command.`
   ].join('\n');
@@ -234,20 +234,16 @@ function getHelpText(command, config) {
     
     // Miner commands
     'mine': `Usage: ${prefix}mine [block_type] [count]\nMine specific blocks until count reached.`,
-    'collect': `Usage: ${prefix}collect [item_type] [count]\nCollect specific items like plants or drops.`,
-    'store': `Usage: ${prefix}store [item] [chest_name]\nStore items in a specific container.`,
-    'craft': `Usage: ${prefix}craft [item] [count]\nCraft a specific item.`,
-    'findore': `Usage: ${prefix}findore [ore_type]\nLocate nearest ore of specified type.`,
+    'store': `Usage: ${prefix}store\nStore items in a storage chest.`,
+    'minearea': `Usage: ${prefix}minearea <x1> <y1> <z1> <x2> <y2> <z2>\nMine all blocks in an area.`,
     
     // Builder commands
-    'build': `Usage: ${prefix}build [schematic_name] [x] [y] [z] [rotation]\nBuild schematic at location.`,
-    'place': `Usage: ${prefix}place [block_type] [x] [y] [z]\nPlace specific block at location.`,
     'buildwall': `Usage: ${prefix}buildwall [block_type] [height] [x1] [z1] [x2] [z2]\nBuild wall between points.`,
+    'blueprint': `Usage: ${prefix}blueprint [name] [x1] [y1] [z1] [x2] [y2] [z2]\nCreate new schematic from area.`,
     
     // Protector commands
     'guard': `Usage: ${prefix}guard [x] [y] [z] or [player_name]\nGuard location or player.`,
     'patrol': `Usage: ${prefix}patrol [x1] [z1] [x2] [z2]\nPatrol rectangular area.`,
-    'attack': `Usage: ${prefix}attack [mob_type/player_name]\nAttack specific targets.`,
   };
 
   return helpTexts[command] || `No help available for command: ${command}`;

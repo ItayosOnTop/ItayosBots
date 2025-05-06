@@ -711,52 +711,6 @@ class BaseBot {
           return 'Invalid arguments. Usage: goto <x> <y> <z>';
         }
         
-      case 'drop':
-        if (args.length >= 1) {
-          const itemName = args[0];
-          const count = args.length >= 2 ? parseInt(args[1]) : null;
-          
-          if (args.length >= 2 && isNaN(count)) {
-            return 'Invalid count. Usage: drop <item> [count]';
-          }
-          
-          this.dropItems(itemName, count)
-            .then((success) => {
-              if (success) {
-                this.bot.chat(`Dropped ${count === null ? 'all' : count} ${itemName}`);
-              } else {
-                this.bot.chat(`Couldn't drop ${itemName}`);
-              }
-            })
-            .catch((err) => {
-              this.bot.chat(`Failed to drop items: ${err.message}`);
-            });
-          return `Dropping ${count === null ? 'all' : count} ${itemName}`;
-        } else {
-          return 'Invalid arguments. Usage: drop <item> [count]';
-        }
-        
-      case 'equip':
-        if (args.length >= 1) {
-          const itemName = args[0];
-          const destination = args.length >= 2 ? args[1] : 'hand';
-          
-          this.equipItem(itemName, destination)
-            .then((success) => {
-              if (success) {
-                this.bot.chat(`Equipped ${itemName}`);
-              } else {
-                this.bot.chat(`Couldn't equip ${itemName}`);
-              }
-            })
-            .catch((err) => {
-              this.bot.chat(`Failed to equip ${itemName}: ${err.message}`);
-            });
-          return `Equipping ${itemName}`;
-        } else {
-          return 'Invalid arguments. Usage: equip <item> [destination]';
-        }
-        
       default:
         // If not a base command, it should be handled by the subclass
         return `Unknown command: ${command}`;

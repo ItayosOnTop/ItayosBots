@@ -318,140 +318,6 @@ class BuilderBot extends BaseBot {
   handleCommand(command, args) {
     // Check for builder-specific commands
     switch (command) {
-      case 'build':
-        if (args.length >= 4) {
-          const schematicName = args[0];
-          const x = parseInt(args[1]);
-          const y = parseInt(args[2]);
-          const z = parseInt(args[3]);
-          const yaw = args.length >= 5 ? parseInt(args[4]) : 0;
-          
-          if (isNaN(x) || isNaN(y) || isNaN(z) || isNaN(yaw)) {
-            return 'Invalid coordinates. Usage: build <schematic> <x> <y> <z> [yaw]';
-          }
-          
-          const location = { x, y, z };
-          this.buildSchematic(schematicName, location, yaw)
-            .then((placedCount) => {
-              this.bot.chat(`Build complete: placed ${placedCount} blocks`);
-            })
-            .catch((err) => {
-              this.bot.chat(`Failed to build ${schematicName}: ${err.message}`);
-            });
-          
-          return `Starting to build ${schematicName} at ${x},${y},${z}`;
-        } else {
-          return 'Invalid arguments. Usage: build <schematic> <x> <y> <z> [yaw]';
-        }
-      
-      case 'place':
-        if (args.length >= 4) {
-          const blockName = args[0];
-          const x = parseInt(args[1]);
-          const y = parseInt(args[2]);
-          const z = parseInt(args[3]);
-          
-          if (isNaN(x) || isNaN(y) || isNaN(z)) {
-            return 'Invalid coordinates. Usage: place <block> <x> <y> <z>';
-          }
-          
-          // Find the block in inventory
-          const item = this.bot.inventory.findInventoryItem(blockName);
-          if (!item) {
-            return `I don't have any ${blockName} in my inventory`;
-          }
-          
-          const location = { x, y, z };
-          this.goToLocation(location, 3)
-            .then(async () => {
-              try {
-                // Look for a placeable face
-                const blockPos = new Vec3(x, y, z);
-                const offsets = [
-                  { x: 1, y: 0, z: 0 },
-                  { x: -1, y: 0, z: 0 },
-                  { x: 0, y: 0, z: 1 },
-                  { x: 0, y: 0, z: -1 },
-                  { x: 0, y: 1, z: 0 },
-                  { x: 0, y: -1, z: 0 }
-                ];
-                
-                let placed = false;
-                for (const offset of offsets) {
-                  const adjacentPos = blockPos.clone().offset(offset.x, offset.y, offset.z);
-                  const adjacentBlock = this.bot.blockAt(adjacentPos);
-                  
-                  if (adjacentBlock && adjacentBlock.name !== 'air') {
-                    // Equip the block
-                    await this.bot.equip(item, 'hand');
-                    
-                    // Place the block
-                    await this.bot.placeBlock(adjacentBlock, new Vec3(-offset.x, -offset.y, -offset.z));
-                    
-                    this.bot.chat(`Placed ${blockName} at ${x},${y},${z}`);
-                    placed = true;
-                    break;
-                  }
-                }
-                
-                if (!placed) {
-                  this.bot.chat(`Couldn't find a face to place the block against`);
-                }
-              } catch (err) {
-                this.bot.chat(`Failed to place block: ${err.message}`);
-              }
-            })
-            .catch((err) => {
-              this.bot.chat(`Failed to reach location: ${err.message}`);
-            });
-          
-          return `Going to place ${blockName} at ${x},${y},${z}`;
-        } else {
-          return 'Invalid arguments. Usage: place <block> <x> <y> <z>';
-        }
-      
-      case 'repair':
-        if (args.length >= 1) {
-          const structureName = args[0];
-          
-          this.repairStructure(structureName)
-            .then((repairedCount) => {
-              this.bot.chat(`Repair complete: fixed ${repairedCount} blocks`);
-            })
-            .catch((err) => {
-              this.bot.chat(`Failed to repair ${structureName}: ${err.message}`);
-            });
-          
-          return `Starting to repair ${structureName}`;
-        } else {
-          return 'Invalid arguments. Usage: repair <structure_name>';
-        }
-      
-      case 'terraform':
-        if (args.length >= 5) {
-          const pattern = args[0];
-          const x1 = parseInt(args[1]);
-          const z1 = parseInt(args[2]);
-          const x2 = parseInt(args[3]);
-          const z2 = parseInt(args[4]);
-          
-          if (isNaN(x1) || isNaN(z1) || isNaN(x2) || isNaN(z2)) {
-            return 'Invalid coordinates. Usage: terraform <pattern> <x1> <z1> <x2> <z2>';
-          }
-          
-          this.terraform(pattern, { x: x1, z: z1 }, { x: x2, z: z2 })
-            .then((modifiedCount) => {
-              this.bot.chat(`Terraforming complete: modified ${modifiedCount} blocks`);
-            })
-            .catch((err) => {
-              this.bot.chat(`Failed to terraform area: ${err.message}`);
-            });
-          
-          return `Starting to terraform area from (${x1},${z1}) to (${x2},${z2}) using ${pattern} pattern`;
-        } else {
-          return 'Invalid arguments. Usage: terraform <pattern> <x1> <z1> <x2> <z2>';
-        }
-      
       case 'buildwall':
         if (args.length >= 6) {
           const blockType = args[0];
@@ -489,7 +355,7 @@ class BuilderBot extends BaseBot {
           const z2 = parseInt(args[6]);
           
           if ([x1, y1, z1, x2, y2, z2].some(isNaN)) {
-            return 'Invalid coordinates. Usage: blueprint <name> <x1> <y1> <z1> <x2> <y2> <z2>';
+            return 'Invalid coordinates. Usage: blueprint <n> <x1> <y1> <z1> <x2> <y2> <z2>';
           }
           
           this.createBlueprint(name, { x: x1, y: y1, z: z1 }, { x: x2, y: y2, z: z2 })
@@ -502,7 +368,7 @@ class BuilderBot extends BaseBot {
           
           return `Creating blueprint "${name}" from area (${x1},${y1},${z1}) to (${x2},${y2},${z2})`;
         } else {
-          return 'Invalid arguments. Usage: blueprint <name> <x1> <y1> <z1> <x2> <y2> <z2>';
+          return 'Invalid arguments. Usage: blueprint <n> <x1> <y1> <z1> <x2> <y2> <z2>';
         }
       
       default:
