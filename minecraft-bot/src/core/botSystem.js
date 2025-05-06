@@ -33,13 +33,20 @@ async function startBotSystem(configObj) {
     dataStore = createDataStore();
     
     // Setup Discord integration if enabled
-    if (config.discord.enabled) {
-      await setupDiscord(
-        config.discord, 
-        (command, source, sender) => handleCommand(command, source, sender, config),
-        config.system.commandPrefix
-      );
-      logger.info('Discord integration initialized');
+    if (config.discord && config.discord.enabled) {
+      try {
+        // Make sure we have a prefix even if config is incomplete
+        const prefix = config.system && config.system.commandPrefix ? config.system.commandPrefix : '#';
+        
+        await setupDiscord(
+          config.discord, 
+          (command, source, sender) => handleCommand(command, source, sender, config),
+          prefix
+        );
+        logger.info('Discord integration initialized');
+      } catch (err) {
+        logger.error('Failed to initialize Discord integration:', err);
+      }
     }
     
     // Create each bot defined in the configuration
@@ -131,21 +138,29 @@ async function createBot(botConfig, globalConfig) {
  * @param {Object} sender - Information about who sent the command
  * @param {Object} config - Global configuration
  */
-function handleCommand(command, source, sender, config) {
+function handleCommand(command, source, sender, configObj) {
+  // Ensure we have a valid config object
+  const cfg = configObj || config || { system: { commandPrefix: '#' } };
+  
   // Verify the sender is authorized
   if (source === 'discord' && !sender.isOwner) {
     return 'You are not authorized to control the bots.';
   }
   
   // Parse the command
+  const prefix = cfg.system.commandPrefix || '#'; 
+  if (!command.startsWith(prefix)) {
+    return; // Not a command
+  }
+  
   const parts = command.trim().split(' ');
-  const cmd = parts[0].substring(config.system.commandPrefix.length);
+  const cmd = parts[0].substring(prefix.length);
   const args = parts.slice(1);
   
   // Handle system-wide commands
   switch (cmd) {
     case 'help':
-      return getHelpText(args[0], config);
+      return getHelpText(args[0], cfg);
     case 'list':
       return listBots();
     case 'stop':
@@ -175,7 +190,8 @@ function handleCommand(command, source, sender, config) {
  * @returns {string} - Help text
  */
 function getHelpText(command, config) {
-  const prefix = config.system.commandPrefix;
+  // Safety check - if config is missing, use a default prefix
+  const prefix = config && config.system && config.system.commandPrefix ? config.system.commandPrefix : '#';
   
   const generalHelp = [
     '**ItayosBot Command Help**',

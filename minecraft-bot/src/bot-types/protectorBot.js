@@ -650,10 +650,6 @@ class ProtectorBot extends BaseBot {
           return 'Invalid arguments. Usage: patrol <x1> <z1> <x2> <z2> ...';
         }
       
-      case 'stop':
-        this.stopGuarding();
-        return 'Stopped guarding';
-      
       case 'attack':
         if (args.length === 1) {
           // Find entity by name or type
@@ -680,9 +676,375 @@ class ProtectorBot extends BaseBot {
           return 'Invalid arguments. Usage: attack <entity>';
         }
       
+      case 'defend':
+        if (args.length === 1) {
+          const target = args[0];
+          
+          // Check if target is a player or bot
+          const targetPlayer = this.bot.players[target];
+          
+          if (targetPlayer && targetPlayer.entity) {
+            this.defendTarget(target, 'player');
+            return `Defending player ${target}`;
+          }
+          
+          // Check if it's another bot
+          if (this.dataStore.getBot(target)) {
+            this.defendTarget(target, 'bot');
+            return `Defending bot ${target}`;
+          }
+          
+          return `Cannot find target ${target} to defend`;
+        } else {
+          return 'Invalid arguments. Usage: defend <player/bot>';
+        }
+      
+      case 'retreat':
+        if (args.length === 3) {
+          const x = parseInt(args[0]);
+          const y = parseInt(args[1]);
+          const z = parseInt(args[2]);
+          
+          if (isNaN(x) || isNaN(y) || isNaN(z)) {
+            return 'Invalid coordinates. Usage: retreat <x> <y> <z>';
+          }
+          
+          this.retreatTo({ x, y, z });
+          return `Retreating to ${x},${y},${z}`;
+        } else {
+          // Retreat automatically
+          this.retreat();
+          return 'Retreating to nearest safe zone';
+        }
+      
+      case 'equip':
+        if (args.length >= 1) {
+          const itemName = args[0];
+          const slot = args.length >= 2 ? args[1] : 'hand';
+          
+          this.equipItem(itemName, slot)
+            .then(success => {
+              if (success) {
+                this.bot.chat(`Equipped ${itemName} in ${slot}`);
+              } else {
+                this.bot.chat(`Could not equip ${itemName} in ${slot}`);
+              }
+            })
+            .catch(err => {
+              this.bot.chat(`Error equipping ${itemName}: ${err.message}`);
+            });
+          
+          return `Attempting to equip ${itemName} in ${slot}`;
+        } else {
+          return 'Invalid arguments. Usage: equip <item> [slot]';
+        }
+      
+      case 'stop':
+        this.stopGuarding();
+        return 'Stopped guarding';
+      
       default:
         // If not a protector command, try base commands
         return super.handleCommand(command, args);
+    }
+  }
+
+  /**
+   * Defend a specific target (player or bot)
+   * @param {string} targetName - Name of the target to defend
+   * @param {string} targetType - Type of target ('player' or 'bot')
+   */
+  async defendTarget(targetName, targetType) {
+    try {
+      logger.info(`${this.bot.username} defending ${targetType} ${targetName}`);
+      
+      this.state.guardTarget = {
+        type: targetType,
+        name: targetName,
+      };
+      
+      this.state.currentTask = `Defending ${targetType} ${targetName}`;
+      
+      // Function to follow the target
+      const followTarget = async () => {
+        let targetEntity = null;
+        
+        if (targetType === 'player') {
+          const player = this.bot.players[targetName];
+          if (player && player.entity) {
+            targetEntity = player.entity;
+          }
+        } else if (targetType === 'bot') {
+          // Try to get bot information from data store
+          const botInfo = this.dataStore.getBot(targetName);
+          if (botInfo && botInfo.position) {
+            // We don't have a direct entity, so navigate to position
+            await this.goToLocation(botInfo.position, 5);
+            return;
+          }
+        }
+        
+        if (targetEntity) {
+          // Check if we're close enough already
+          const distance = this.bot.entity.position.distanceTo(targetEntity.position);
+          
+          if (distance > 5) {
+            // Follow the target
+            await this.goToLocation({ 
+              x: targetEntity.position.x, 
+              y: targetEntity.position.y, 
+              z: targetEntity.position.z 
+            }, 5);
+          }
+          
+          // Scan for threats around the target
+          const threats = this.findThreatsAroundPosition(targetEntity.position, this.protectionRadius);
+          
+          // Handle any threats
+          if (threats.length > 0) {
+            logger.info(`${this.bot.username} detected ${threats.length} threats near ${targetName}`);
+            
+            // Attack the closest threat
+            threats.sort((a, b) => {
+              return a.position.distanceTo(targetEntity.position) - 
+                    b.position.distanceTo(targetEntity.position);
+            });
+            
+            await this.attackEntity(threats[0]);
+          }
+        }
+      };
+      
+      // Start following loop
+      const defendInterval = setInterval(async () => {
+        // Check if we're still defending
+        if (!this.state.guardTarget || this.state.guardTarget.name !== targetName) {
+          clearInterval(defendInterval);
+          return;
+        }
+        
+        await followTarget().catch(err => {
+          logger.warn(`Error following ${targetType} ${targetName}:`, err);
+        });
+      }, 2000);
+      
+      // Set a 5-minute timeout to avoid infinite defense
+      setTimeout(() => {
+        if (this.state.guardTarget && this.state.guardTarget.name === targetName) {
+          logger.info(`${this.bot.username} stopping defense of ${targetName} after timeout`);
+          clearInterval(defendInterval);
+          this.state.guardTarget = null;
+          this.state.currentTask = null;
+        }
+      }, 300000); // 5 minutes
+    } catch (error) {
+      logger.error(`Error defending ${targetName}:`, error);
+      this.state.guardTarget = null;
+      this.state.currentTask = null;
+    }
+  }
+
+  /**
+   * Find threats around a specific position
+   * @param {Object} position - Position to scan around
+   * @param {number} radius - Radius to scan
+   * @returns {Array} - List of hostile entities
+   */
+  findThreatsAroundPosition(position, radius) {
+    const entities = Object.values(this.bot.entities);
+    
+    // Filter for hostile mobs within range
+    return entities.filter(entity => {
+      if (!this.isHostileMob(entity)) return false;
+      
+      const distance = entity.position.distanceTo(position);
+      return distance <= radius;
+    });
+  }
+
+  /**
+   * Retreat to a specific location
+   * @param {Object} location - Location to retreat to
+   * @returns {Promise<boolean>} - Whether the retreat was successful
+   */
+  async retreatTo(location) {
+    try {
+      this.state.currentTask = `Retreating to ${location.x},${location.y},${location.z}`;
+      logger.info(`${this.bot.username} retreating to ${location.x},${location.y},${location.z}`);
+      
+      // Stop any current guard activities
+      this.stopGuarding();
+      
+      // Equip shield if available
+      await this.equipBestShield();
+      
+      // Go to the retreat location
+      await this.goToLocation(location);
+      
+      logger.info(`${this.bot.username} reached retreat location`);
+      this.state.currentTask = null;
+      return true;
+    } catch (error) {
+      logger.error(`Error retreating to location:`, error);
+      this.state.currentTask = null;
+      return false;
+    }
+  }
+
+  /**
+   * Equip the best shield available
+   * @returns {Promise<boolean>} - Whether a shield was equipped
+   */
+  async equipBestShield() {
+    try {
+      // Find shields in inventory
+      const shields = this.bot.inventory.items().filter(item => 
+        item.name.includes('shield')
+      );
+      
+      if (shields.length === 0) {
+        logger.debug(`${this.bot.username} has no shields in inventory`);
+        return false;
+      }
+      
+      // Equip the shield in offhand
+      await this.bot.equip(shields[0], 'off-hand');
+      logger.info(`${this.bot.username} equipped ${shields[0].name} in off-hand`);
+      return true;
+    } catch (error) {
+      logger.warn(`Error equipping shield:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * Equip a specific item
+   * @param {string} itemName - Name of the item to equip
+   * @param {string} slot - Slot to equip the item in ('hand', 'off-hand', 'head', 'torso', 'legs', 'feet')
+   * @returns {Promise<boolean>} - Whether the item was equipped
+   */
+  async equipItem(itemName, slot = 'hand') {
+    try {
+      // Handle armor slots
+      const armorSlots = {
+        'head': 'helmet',
+        'torso': 'chestplate',
+        'legs': 'leggings',
+        'feet': 'boots'
+      };
+      
+      // Find items matching the name
+      const items = this.bot.inventory.items().filter(item => 
+        item.name.toLowerCase().includes(itemName.toLowerCase())
+      );
+      
+      if (items.length === 0) {
+        logger.warn(`${this.bot.username} has no ${itemName} in inventory`);
+        return false;
+      }
+      
+      // If it's armor, we need to be more specific
+      if (armorSlots[slot]) {
+        // For armor, prefer items that contain both the itemName and the slot type
+        const armorItems = items.filter(item => 
+          item.name.toLowerCase().includes(armorSlots[slot])
+        );
+        
+        if (armorItems.length > 0) {
+          await this.bot.equip(armorItems[0], slot);
+          logger.info(`${this.bot.username} equipped ${armorItems[0].name} in ${slot}`);
+          return true;
+        }
+      }
+      
+      // Otherwise just equip the first matching item
+      await this.bot.equip(items[0], slot);
+      logger.info(`${this.bot.username} equipped ${items[0].name} in ${slot}`);
+      return true;
+    } catch (error) {
+      logger.error(`Error equipping ${itemName}:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * Equip best available armor
+   * @returns {Promise<boolean>} - Whether any armor was equipped
+   */
+  async equipBestArmor() {
+    try {
+      // Get all armor items in inventory
+      const armorItems = this.bot.inventory.items().filter(item => {
+        return item.name.includes('helmet') || 
+               item.name.includes('chestplate') || 
+               item.name.includes('leggings') || 
+               item.name.includes('boots');
+      });
+      
+      if (armorItems.length === 0) {
+        logger.debug(`${this.bot.username} has no armor in inventory`);
+        return false;
+      }
+      
+      // Group armor by slot
+      const helmetItems = armorItems.filter(item => item.name.includes('helmet'));
+      const chestplateItems = armorItems.filter(item => item.name.includes('chestplate'));
+      const leggingsItems = armorItems.filter(item => item.name.includes('leggings'));
+      const bootsItems = armorItems.filter(item => item.name.includes('boots'));
+      
+      // Armor quality ordering
+      const armorMaterials = ['netherite', 'diamond', 'iron', 'chainmail', 'gold', 'leather'];
+      
+      // Function to find best armor of a type
+      const findBestArmor = (items) => {
+        if (items.length === 0) return null;
+        
+        return items.sort((a, b) => {
+          const materialA = armorMaterials.findIndex(material => a.name.includes(material));
+          const materialB = armorMaterials.findIndex(material => b.name.includes(material));
+          
+          // Lower index means better material
+          return materialA - materialB;
+        })[0];
+      };
+      
+      // Find and equip best armor for each slot
+      const bestHelmet = findBestArmor(helmetItems);
+      const bestChestplate = findBestArmor(chestplateItems);
+      const bestLeggings = findBestArmor(leggingsItems);
+      const bestBoots = findBestArmor(bootsItems);
+      
+      // Equip each piece if found
+      let equipped = 0;
+      
+      if (bestHelmet) {
+        await this.bot.equip(bestHelmet, 'head');
+        equipped++;
+        logger.info(`${this.bot.username} equipped ${bestHelmet.name}`);
+      }
+      
+      if (bestChestplate) {
+        await this.bot.equip(bestChestplate, 'torso');
+        equipped++;
+        logger.info(`${this.bot.username} equipped ${bestChestplate.name}`);
+      }
+      
+      if (bestLeggings) {
+        await this.bot.equip(bestLeggings, 'legs');
+        equipped++;
+        logger.info(`${this.bot.username} equipped ${bestLeggings.name}`);
+      }
+      
+      if (bestBoots) {
+        await this.bot.equip(bestBoots, 'feet');
+        equipped++;
+        logger.info(`${this.bot.username} equipped ${bestBoots.name}`);
+      }
+      
+      return equipped > 0;
+    } catch (error) {
+      logger.error(`Error equipping best armor:`, error);
+      return false;
     }
   }
 }

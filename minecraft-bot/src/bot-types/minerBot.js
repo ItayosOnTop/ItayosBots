@@ -296,9 +296,410 @@ class MinerBot extends BaseBot {
         
         return 'Returning to storage to deposit items';
       
+      case 'collect':
+        if (args.length >= 1) {
+          const itemType = args[0];
+          const count = args.length >= 2 ? parseInt(args[1]) : 1;
+          
+          if (args.length >= 2 && isNaN(count)) {
+            return 'Invalid count. Usage: collect <itemType> [count]';
+          }
+          
+          this.collectItem(itemType, count)
+            .then((collected) => {
+              this.bot.chat(`Collected ${collected} ${itemType}`);
+            })
+            .catch((err) => {
+              this.bot.chat(`Failed to collect ${itemType}: ${err.message}`);
+            });
+          
+          return `Started collecting ${count} ${itemType}`;
+        } else {
+          return 'Invalid arguments. Usage: collect <itemType> [count]';
+        }
+      
+      case 'craft':
+        if (args.length >= 1) {
+          const itemType = args[0];
+          const count = args.length >= 2 ? parseInt(args[1]) : 1;
+          
+          if (args.length >= 2 && isNaN(count)) {
+            return 'Invalid count. Usage: craft <itemType> [count]';
+          }
+          
+          this.craftItem(itemType, count)
+            .then((crafted) => {
+              this.bot.chat(`Crafted ${crafted} ${itemType}`);
+            })
+            .catch((err) => {
+              this.bot.chat(`Failed to craft ${itemType}: ${err.message}`);
+            });
+          
+          return `Attempting to craft ${count} ${itemType}`;
+        } else {
+          return 'Invalid arguments. Usage: craft <itemType> [count]';
+        }
+      
+      case 'findore':
+        if (args.length >= 1) {
+          const oreType = args[0];
+          
+          this.findOre(oreType)
+            .then((found) => {
+              if (found) {
+                this.bot.chat(`Found ${oreType} at ${Math.floor(found.x)}, ${Math.floor(found.y)}, ${Math.floor(found.z)}`);
+              } else {
+                this.bot.chat(`Could not find any ${oreType} nearby`);
+              }
+            })
+            .catch((err) => {
+              this.bot.chat(`Error finding ${oreType}: ${err.message}`);
+            });
+          
+          return `Searching for ${oreType}...`;
+        } else {
+          return 'Invalid arguments. Usage: findore <oreType>';
+        }
+        
+      case 'minearea':
+        if (args.length >= 6) {
+          const x1 = parseInt(args[0]);
+          const y1 = parseInt(args[1]);
+          const z1 = parseInt(args[2]);
+          const x2 = parseInt(args[3]);
+          const y2 = parseInt(args[4]);
+          const z2 = parseInt(args[5]);
+          
+          if ([x1, y1, z1, x2, y2, z2].some(isNaN)) {
+            return 'Invalid coordinates. Usage: minearea <x1> <y1> <z1> <x2> <y2> <z2>';
+          }
+          
+          this.mineArea({ x: x1, y: y1, z: z1 }, { x: x2, y: y2, z: z2 })
+            .then((count) => {
+              this.bot.chat(`Mined ${count} blocks in the specified area`);
+            })
+            .catch((err) => {
+              this.bot.chat(`Failed to mine area: ${err.message}`);
+            });
+          
+          return `Started mining area from (${x1},${y1},${z1}) to (${x2},${y2},${z2})`;
+        } else {
+          return 'Invalid arguments. Usage: minearea <x1> <y1> <z1> <x2> <y2> <z2>';
+        }
+        
       default:
         // If not a miner command, try base commands
         return super.handleCommand(command, args);
+    }
+  }
+
+  /**
+   * Collect specific items like plants or drops
+   * @param {string} itemType - Type of item to collect
+   * @param {number} count - Number of items to collect
+   * @returns {Promise<number>} - Number of items collected
+   */
+  async collectItem(itemType, count = 1) {
+    try {
+      this.state.currentTask = `Collecting ${count} ${itemType}`;
+      logger.info(`${this.bot.username} starting to collect ${count} ${itemType}`);
+      
+      // Define a list of items that can be collected (crops, flowers, etc.)
+      const collectableItems = {
+        'wheat': ['wheat_seeds', 'wheat'],
+        'carrot': ['carrot', 'carrots'],
+        'potato': ['potato', 'potatoes'],
+        'beetroot': ['beetroot', 'beetroot_seeds'],
+        'melon': ['melon_slice'],
+        'pumpkin': ['pumpkin'],
+        'sugarcane': ['sugar_cane'],
+        'flower': ['poppy', 'dandelion', 'blue_orchid', 'allium', 'azure_bluet', 'red_tulip', 'orange_tulip', 'white_tulip', 'pink_tulip', 'oxeye_daisy', 'cornflower', 'lily_of_the_valley', 'wither_rose', 'sunflower', 'lilac', 'rose_bush', 'peony'],
+      };
+      
+      // Find matching items
+      const itemsToCollect = collectableItems[itemType.toLowerCase()] || [itemType.toLowerCase()];
+      let collected = 0;
+      
+      while (collected < count) {
+        // Look for blocks to collect
+        const blockToCollect = this.bot.findBlock({
+          matching: (block) => {
+            return itemsToCollect.some(item => block.name.includes(item));
+          },
+          maxDistance: 64,
+        });
+        
+        if (!blockToCollect) {
+          logger.info(`${this.bot.username} couldn't find any more ${itemType} to collect`);
+          break;
+        }
+        
+        // Go to the block
+        await this.goToLocation({ x: blockToCollect.position.x, y: blockToCollect.position.y, z: blockToCollect.position.z }, 2);
+        
+        // Try to harvest/collect the block
+        try {
+          await this.bot.dig(blockToCollect);
+          collected++;
+          this.state.currentTask = `Collecting ${itemType} (${collected}/${count})`;
+        } catch (error) {
+          logger.warn(`${this.bot.username} couldn't harvest ${blockToCollect.name}: ${error.message}`);
+        }
+        
+        // Check if inventory is getting full
+        if (this.returnWhenInventoryFull && this.bot.inventory.emptySlotCount() < 5) {
+          await this.returnToStorage();
+        }
+      }
+      
+      this.state.currentTask = null;
+      return collected;
+    } catch (error) {
+      logger.error(`Error collecting ${itemType}:`, error);
+      this.state.currentTask = null;
+      throw error;
+    }
+  }
+
+  /**
+   * Craft an item
+   * @param {string} itemType - Type of item to craft
+   * @param {number} count - Number of items to craft
+   * @returns {Promise<number>} - Number of items crafted
+   */
+  async craftItem(itemType, count = 1) {
+    try {
+      this.state.currentTask = `Crafting ${count} ${itemType}`;
+      logger.info(`${this.bot.username} attempting to craft ${count} ${itemType}`);
+      
+      let crafted = 0;
+      
+      // Load recipe
+      const recipe = this.bot.recipesFor(itemType);
+      if (!recipe || recipe.length === 0) {
+        throw new Error(`No recipe found for ${itemType}`);
+      }
+      
+      // Use the first recipe found (may need to be more selective in the future)
+      const selectedRecipe = recipe[0];
+      
+      // Craft the items
+      for (let i = 0; i < count; i++) {
+        // Check if we have the ingredients
+        const hasMaterials = selectedRecipe.delta.every(d => {
+          // If it's a required ingredient (negative delta value)
+          if (d.count < 0) {
+            const available = this.bot.inventory.count(d.id, d.metadata);
+            return available >= Math.abs(d.count);
+          }
+          return true;
+        });
+        
+        if (!hasMaterials) {
+          logger.warn(`${this.bot.username} doesn't have all materials to craft ${itemType}`);
+          break;
+        }
+        
+        // Craft the item
+        try {
+          await this.bot.craft(selectedRecipe, 1, null);
+          crafted++;
+          logger.info(`${this.bot.username} crafted ${itemType}`);
+        } catch (error) {
+          logger.warn(`${this.bot.username} failed to craft ${itemType}: ${error.message}`);
+          break;
+        }
+      }
+      
+      this.state.currentTask = null;
+      return crafted;
+    } catch (error) {
+      logger.error(`Error crafting ${itemType}:`, error);
+      this.state.currentTask = null;
+      throw error;
+    }
+  }
+
+  /**
+   * Find the nearest ore of a specific type
+   * @param {string} oreType - Type of ore to find
+   * @returns {Promise<Object|null>} - Position of the ore or null if not found
+   */
+  async findOre(oreType) {
+    try {
+      this.state.currentTask = `Finding ${oreType}`;
+      logger.info(`${this.bot.username} searching for ${oreType}`);
+      
+      // Create a list of block names to look for based on the ore type
+      const blockNames = [];
+      
+      // Handle different ore types
+      const oreName = oreType.toLowerCase();
+      
+      if (oreName === 'diamond') {
+        blockNames.push('diamond_ore', 'deepslate_diamond_ore');
+      } else if (oreName === 'iron') {
+        blockNames.push('iron_ore', 'deepslate_iron_ore');
+      } else if (oreName === 'gold') {
+        blockNames.push('gold_ore', 'deepslate_gold_ore', 'nether_gold_ore');
+      } else if (oreName === 'coal') {
+        blockNames.push('coal_ore', 'deepslate_coal_ore');
+      } else if (oreName === 'redstone') {
+        blockNames.push('redstone_ore', 'deepslate_redstone_ore');
+      } else if (oreName === 'lapis') {
+        blockNames.push('lapis_ore', 'deepslate_lapis_ore');
+      } else if (oreName === 'emerald') {
+        blockNames.push('emerald_ore', 'deepslate_emerald_ore');
+      } else if (oreName === 'copper') {
+        blockNames.push('copper_ore', 'deepslate_copper_ore');
+      } else if (oreName === 'quartz') {
+        blockNames.push('nether_quartz_ore');
+      } else if (oreName === 'ancient_debris') {
+        blockNames.push('ancient_debris');
+      } else {
+        // Try to use the direct name
+        blockNames.push(oreName, `deepslate_${oreName}`, `${oreName}_ore`, `deepslate_${oreName}_ore`);
+      }
+      
+      // Find blocks matching any of the names
+      const matchingBlocks = [];
+      for (const blockName of blockNames) {
+        try {
+          const blocksByName = Object.values(this.bot.registry.blocksByName)
+            .filter(block => block.name === blockName)
+            .map(block => block.id);
+          
+          if (blocksByName.length > 0) {
+            const found = this.bot.findBlocks({
+              matching: blocksByName,
+              maxDistance: 64,
+              count: 5,
+            });
+            
+            matchingBlocks.push(...found);
+          }
+        } catch (error) {
+          // Continue with other block names
+          logger.debug(`Error finding blocks with name ${blockName}: ${error.message}`);
+        }
+      }
+      
+      if (matchingBlocks.length === 0) {
+        logger.info(`${this.bot.username} couldn't find any ${oreType} nearby`);
+        this.state.currentTask = null;
+        return null;
+      }
+      
+      // Find the closest block
+      const botPosition = this.bot.entity.position;
+      matchingBlocks.sort((a, b) => {
+        const distA = Math.sqrt(
+          Math.pow(a.x - botPosition.x, 2) +
+          Math.pow(a.y - botPosition.y, 2) +
+          Math.pow(a.z - botPosition.z, 2)
+        );
+        
+        const distB = Math.sqrt(
+          Math.pow(b.x - botPosition.x, 2) +
+          Math.pow(b.y - botPosition.y, 2) +
+          Math.pow(b.z - botPosition.z, 2)
+        );
+        
+        return distA - distB;
+      });
+      
+      const closest = matchingBlocks[0];
+      logger.info(`${this.bot.username} found ${oreType} at ${closest.x}, ${closest.y}, ${closest.z}`);
+      
+      this.state.currentTask = null;
+      return closest;
+    } catch (error) {
+      logger.error(`Error finding ${oreType}:`, error);
+      this.state.currentTask = null;
+      throw error;
+    }
+  }
+
+  /**
+   * Mine all blocks in a specified area
+   * @param {Object} start - Start coordinates {x, y, z}
+   * @param {Object} end - End coordinates {x, y, z}
+   * @returns {Promise<number>} - Number of blocks mined
+   */
+  async mineArea(start, end) {
+    try {
+      this.state.currentTask = `Mining area from (${start.x},${start.y},${start.z}) to (${end.x},${end.y},${end.z})`;
+      logger.info(`${this.bot.username} starting to mine area from (${start.x},${start.y},${start.z}) to (${end.x},${end.y},${end.z})`);
+      
+      // Make sure start coordinates are smaller than end coordinates
+      const minX = Math.min(start.x, end.x);
+      const minY = Math.min(start.y, end.y);
+      const minZ = Math.min(start.z, end.z);
+      const maxX = Math.max(start.x, end.x);
+      const maxY = Math.max(start.y, end.y);
+      const maxZ = Math.max(start.z, end.z);
+      
+      let mined = 0;
+      
+      // Create a list of blocks to mine
+      const blocksToMine = [];
+      
+      // Skip air and bedrock blocks
+      const skipBlocks = ['air', 'cave_air', 'void_air', 'bedrock'];
+      
+      // Go to the start position first
+      await this.goToLocation({ x: minX, y: minY, z: minZ });
+      
+      // Scan the area for blocks to mine
+      for (let y = minY; y <= maxY; y++) {
+        for (let x = minX; x <= maxX; x++) {
+          for (let z = minZ; z <= maxZ; z++) {
+            const block = this.bot.blockAt(new this.bot.vec3(x, y, z));
+            
+            if (block && !skipBlocks.includes(block.name)) {
+              blocksToMine.push(block);
+            }
+          }
+        }
+      }
+      
+      // Sort blocks from top to bottom to prevent cave-ins
+      blocksToMine.sort((a, b) => b.position.y - a.position.y);
+      
+      // Mine each block
+      for (const block of blocksToMine) {
+        try {
+          // Check if inventory is getting full
+          if (this.returnWhenInventoryFull && this.bot.inventory.emptySlotCount() < 5) {
+            await this.returnToStorage();
+          }
+          
+          // Get close to the block
+          await this.goToLocation({ 
+            x: block.position.x, 
+            y: block.position.y, 
+            z: block.position.z 
+          }, 3);
+          
+          // Dig the block
+          await this.bot.dig(block);
+          mined++;
+          
+          // Update task status
+          this.state.currentTask = `Mining area (${mined}/${blocksToMine.length})`;
+        } catch (error) {
+          logger.warn(`Error mining block at ${block.position.x},${block.position.y},${block.position.z}: ${error.message}`);
+          // Continue with the next block
+        }
+      }
+      
+      logger.info(`${this.bot.username} mined ${mined} blocks in the area`);
+      this.state.currentTask = null;
+      return mined;
+    } catch (error) {
+      logger.error(`Error mining area:`, error);
+      this.state.currentTask = null;
+      throw error;
     }
   }
 }

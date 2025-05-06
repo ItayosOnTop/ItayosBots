@@ -67,10 +67,13 @@ function setupEventHandlers() {
     
     // Process the command
     try {
+      // Make sure we can check owner permissions properly
+      const discordOwnerId = config.discordId || config.ownerId || (config.owner && config.owner.discordId);
+      
       const sender = {
         id: message.author.id,
         username: message.author.username,
-        isOwner: message.author.id === config.discordId || config.ownerId,
+        isOwner: discordOwnerId ? message.author.id === discordOwnerId : false,
       };
       
       // Pass command to handler

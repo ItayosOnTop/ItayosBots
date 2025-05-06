@@ -293,25 +293,109 @@ class BaseBot {
   }
   
   /**
-   * Equip an item by name
+   * Equip a specific item
    * @param {string} itemName - Name of the item to equip
-   * @param {string} [destination='hand'] - Where to equip the item ('hand', 'head', 'torso', 'legs', 'feet', 'off-hand')
-   * @returns {Promise} - Resolves when item is equipped or rejected on failure
+   * @param {string} slot - Slot to equip the item in ('hand', 'off-hand', 'head', 'torso', 'legs', 'feet')
+   * @returns {Promise<boolean>} - Whether the item was equipped
    */
-  async equipItem(itemName, destination = 'hand') {
+  async equipItem(itemName, slot = 'hand') {
     try {
-      const item = this.bot.inventory.findInventoryItem(itemName);
+      // Get the item from inventory
+      const item = this.bot.inventory.items().find(item => 
+        item.name.includes(itemName)
+      );
       
       if (!item) {
-        logger.warn(`${this.bot.username} doesn't have ${itemName}`);
+        logger.warn(`${this.bot.username} doesn't have ${itemName} in inventory`);
         return false;
       }
       
-      await this.bot.equip(item, destination);
-      logger.debug(`${this.bot.username} equipped ${itemName}`);
+      await this.bot.equip(item, slot);
+      logger.info(`${this.bot.username} equipped ${item.name} in ${slot}`);
       return true;
-    } catch (err) {
-      logger.error(`Failed to equip ${itemName}:`, err);
+    } catch (error) {
+      logger.error(`Error equipping ${itemName}:`, error);
+      return false;
+    }
+  }
+  
+  /**
+   * Equip best available armor
+   * @returns {Promise<boolean>} - Whether any armor was equipped
+   */
+  async equipBestArmor() {
+    try {
+      // Get all armor items in inventory
+      const armorItems = this.bot.inventory.items().filter(item => {
+        return item.name.includes('helmet') || 
+               item.name.includes('chestplate') || 
+               item.name.includes('leggings') || 
+               item.name.includes('boots');
+      });
+      
+      if (armorItems.length === 0) {
+        logger.debug(`${this.bot.username} has no armor in inventory`);
+        return false;
+      }
+      
+      // Group armor by slot
+      const helmetItems = armorItems.filter(item => item.name.includes('helmet'));
+      const chestplateItems = armorItems.filter(item => item.name.includes('chestplate'));
+      const leggingsItems = armorItems.filter(item => item.name.includes('leggings'));
+      const bootsItems = armorItems.filter(item => item.name.includes('boots'));
+      
+      // Armor quality ordering
+      const armorMaterials = ['netherite', 'diamond', 'iron', 'chainmail', 'gold', 'leather'];
+      
+      // Function to find best armor of a type
+      const findBestArmor = (items) => {
+        if (items.length === 0) return null;
+        
+        return items.sort((a, b) => {
+          const materialA = armorMaterials.findIndex(material => a.name.includes(material));
+          const materialB = armorMaterials.findIndex(material => b.name.includes(material));
+          
+          // Lower index means better material
+          return materialA - materialB;
+        })[0];
+      };
+      
+      // Find and equip best armor for each slot
+      const bestHelmet = findBestArmor(helmetItems);
+      const bestChestplate = findBestArmor(chestplateItems);
+      const bestLeggings = findBestArmor(leggingsItems);
+      const bestBoots = findBestArmor(bootsItems);
+      
+      // Equip each piece if found
+      let equipped = 0;
+      
+      if (bestHelmet) {
+        await this.bot.equip(bestHelmet, 'head');
+        equipped++;
+        logger.info(`${this.bot.username} equipped ${bestHelmet.name}`);
+      }
+      
+      if (bestChestplate) {
+        await this.bot.equip(bestChestplate, 'torso');
+        equipped++;
+        logger.info(`${this.bot.username} equipped ${bestChestplate.name}`);
+      }
+      
+      if (bestLeggings) {
+        await this.bot.equip(bestLeggings, 'legs');
+        equipped++;
+        logger.info(`${this.bot.username} equipped ${bestLeggings.name}`);
+      }
+      
+      if (bestBoots) {
+        await this.bot.equip(bestBoots, 'feet');
+        equipped++;
+        logger.info(`${this.bot.username} equipped ${bestBoots.name}`);
+      }
+      
+      return equipped > 0;
+    } catch (error) {
+      logger.error(`Error equipping best armor:`, error);
       return false;
     }
   }
@@ -491,6 +575,17 @@ class BaseBot {
         // If not a base command, it should be handled by the subclass
         return `Unknown command: ${command}`;
     }
+  }
+  
+  /**
+   * Update the todo.md file to reflect completion of commands
+   * @param {string} command - Command that was implemented
+   * @param {string} botType - Bot type the command belongs to
+   */
+  async updateCommandImplementationStatus(command, botType) {
+    // This is a stub - in a real implementation, you would
+    // update the todo.md file to mark commands as completed
+    logger.debug(`Implemented command ${command} for bot type ${botType}`);
   }
 }
 
