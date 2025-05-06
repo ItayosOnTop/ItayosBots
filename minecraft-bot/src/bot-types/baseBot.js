@@ -239,25 +239,36 @@ class BaseBot {
     const position = new Vec3(x, y, z);
     this.currentTask = `Moving to [${x}, ${y}, ${z}]`;
     
+    // Check if pathfinder is available
+    if (!this.bot.pathfinder) {
+      logger.error(`${this.bot.username} pathfinder plugin not available`);
+      this.currentTask = null;
+      return;
+    }
+    
     // Create a goal to move to the target position
     const goal = new goals.GoalNear(position.x, position.y, position.z, 1);
     
     // Use pathfinder to navigate
     this.bot.pathfinder.setGoal(goal);
     
-    // Listen for goal reached
-    this.bot.pathfinder.once('goal_reached', () => {
+    // Use regular events instead of 'once'
+    const goalReachedHandler = () => {
+      this.bot.removeListener('goal_reached', goalReachedHandler);
       this.currentTask = null;
       logger.info(`${this.bot.username} reached destination [${x}, ${y}, ${z}]`);
-    });
+    };
     
-    // Listen for goal failed
-    this.bot.pathfinder.once('path_update', (results) => {
+    const pathUpdateHandler = (results) => {
       if (results.status === 'noPath') {
+        this.bot.removeListener('path_update', pathUpdateHandler);
         this.currentTask = null;
         logger.warn(`${this.bot.username} could not find path to [${x}, ${y}, ${z}]`);
       }
-    });
+    };
+    
+    this.bot.on('goal_reached', goalReachedHandler);
+    this.bot.on('path_update', pathUpdateHandler);
   }
   
   /**
@@ -265,9 +276,13 @@ class BaseBot {
    */
   stopCurrentTask() {
     // Cancel pathfinding
-    if (this.bot.pathfinder.isMoving()) {
+    if (this.bot.pathfinder && this.bot.pathfinder.isMoving()) {
       this.bot.pathfinder.setGoal(null);
     }
+    
+    // Remove all pathfinding-related listeners
+    this.bot.removeAllListeners('goal_reached');
+    this.bot.removeAllListeners('path_update');
     
     // Reset task state
     this.currentTask = null;
