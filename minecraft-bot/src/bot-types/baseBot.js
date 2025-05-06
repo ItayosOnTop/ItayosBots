@@ -188,13 +188,17 @@ class BaseBot {
    * @returns {boolean} - Whether the entity is hostile
    */
   isHostileEntity(entity) {
+    if (!entity || !entity.name) return false;
+    
     const hostileTypes = [
       'zombie', 'skeleton', 'spider', 'creeper', 'enderman', 
-      'witch', 'slime', 'cave_spider', 'silverfish', 'zombie_villager'
+      'witch', 'slime', 'cave_spider', 'silverfish', 'zombie_villager',
+      'husk', 'stray', 'evoker', 'vex', 'vindicator', 'illusioner',
+      'pillager', 'ravager', 'phantom', 'drowned', 'blaze', 'ghast', 'magma_cube'
     ];
     
-    return entity && entity.type === 'mob' && 
-      hostileTypes.some(type => entity.name && entity.name.toLowerCase().includes(type));
+    return entity.type === 'mob' && 
+      hostileTypes.some(type => entity.name.toLowerCase().includes(type));
   }
   
   /**

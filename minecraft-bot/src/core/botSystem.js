@@ -3,7 +3,7 @@
  */
 
 const mineflayer = require('mineflayer');
-const { pathfinder } = require('mineflayer-pathfinder');
+const { pathfinder, Movements, goals } = require('mineflayer-pathfinder');
 const armorManager = require('mineflayer-armor-manager');
 const { setupDiscord } = require('./discordIntegration');
 const { createBotByType } = require('../bot-types/botFactory');
@@ -89,6 +89,15 @@ async function createBot(botConfig, globalConfig) {
   // Setup event listeners
   bot.once('spawn', () => {
     logger.info(`Bot ${username} (${type}) has spawned`);
+    
+    // Configure pathfinder with default movements
+    const mcData = require('minecraft-data')(bot.version);
+    const movements = new Movements(bot, mcData);
+    movements.canDig = true;
+    movements.allowSprinting = true;
+    movements.scafoldingBlocks = ['dirt', 'cobblestone', 'stone'];
+    
+    bot.pathfinder.setMovements(movements);
     
     // Auto-equip best armor on spawn
     bot.armorManager.equipAll();

@@ -4,8 +4,10 @@
 
 const BaseBot = require('./baseBot');
 const { logger } = require('../utils/logger');
-const { goals } = require('mineflayer-pathfinder');
+const { goals, Movements } = require('mineflayer-pathfinder');
 const Vec3 = require('vec3').Vec3;
+const { plugin: pvpPlugin } = require('mineflayer-pvp');
+const { plugin: autoEatPlugin } = require('mineflayer-auto-eat');
 
 class ProtectorBot extends BaseBot {
   /**
@@ -18,6 +20,19 @@ class ProtectorBot extends BaseBot {
   constructor(bot, typeConfig, globalConfig, dataStore) {
     super(bot, typeConfig, globalConfig, dataStore);
     
+    // Load the PVP plugin correctly
+    bot.loadPlugin(pvpPlugin);
+    
+    // Load auto-eat plugin
+    bot.loadPlugin(autoEatPlugin);
+    
+    // Configure auto-eat
+    bot.autoEat.options = {
+      priority: 'foodPoints',
+      startAt: 14,
+      bannedFood: []
+    };
+    
     // Protector-specific state
     this.state = {
       ...this.state,
@@ -25,10 +40,14 @@ class ProtectorBot extends BaseBot {
       patrolPoints: [],
       currentPatrolIndex: 0,
       threatsDetected: [],
+      guardPosition: null,
+      isGuarding: false,
+      isFollowing: false,
+      followTarget: null
     };
     
     // Configure protector behavior
-    this.protectionRadius = typeConfig.protectionRadius || 50;
+    this.protectionRadius = typeConfig.protectionRadius || 15;
     this.aggressionLevel = typeConfig.aggressionLevel || 'medium';
     this.retreatHealthThreshold = typeConfig.retreatHealthThreshold || 7;
     
@@ -40,20 +59,92 @@ class ProtectorBot extends BaseBot {
    * Set up protector-specific event handlers
    */
   setupProtectorEvents() {
-    // Scan for hostile mobs
+    // Auto-equip shield when collected
+    this.bot.on('playerCollect', (collector, itemDrop) => {
+      if (collector !== this.bot.entity) return;
+      
+      setTimeout(() => {
+        const shield = this.bot.inventory.items().find(item => item.name.includes('shield'));
+        if (shield) this.bot.equip(shield, 'off-hand');
+      }, 250);
+    });
+    
+    // Scan for hostile mobs on physics tick
     this.bot.on('physicsTick', () => {
-      // Every 2 seconds (40 ticks)
-      if (this.bot.time.age % 40 === 0) {
+      // Every 1 second (20 ticks)
+      if (this.bot.time.age % 20 === 0) {
         this.scanForThreats();
-        
-        // Actively check for and attack nearby threats regardless of guard status
-        // This makes the guard proactively attack any hostile mobs in range
-        if (this.state.threatsDetected.length > 0 && 
-            (this.state.currentTask === null || 
-             this.state.currentTask.includes('Patrolling') || 
-             this.state.currentTask.includes('Guarding'))) {
-          this.handleThreats();
+      }
+      
+      // Look at nearby entities when not attacking or moving
+      if (!this.bot.pvp?.target && !this.bot.pathfinder.isMoving()) {
+        const entity = this.bot.nearestEntity();
+        if (entity) {
+          this.bot.lookAt(entity.position.offset(0, entity.height, 0));
         }
+      }
+      
+      // Handle guarding - attack mobs that come near guard position
+      if (this.state.isGuarding && this.state.guardPosition) {
+        // Skip if already attacking something
+        if (this.bot.pvp?.target) return;
+        
+        // Find hostile entities near guard position
+        const mcData = require('minecraft-data')(this.bot.version);
+        const filter = e => {
+          return (e.type === 'mob' && this.isHostileMob(e)) || 
+                 (e.type === 'player' && e.username !== this.bot.username && 
+                  e.username !== this.globalConfig.owner.minecraftUsername) &&
+                 e.position.distanceTo(this.state.guardPosition) < this.protectionRadius;
+        };
+        
+        const entity = this.bot.nearestEntity(filter);
+        if (entity) {
+          logger.info(`${this.bot.username} detected ${entity.name || entity.username} near guard position, attacking`);
+          
+          // Equip best weapon
+          this.equipBestWeapon().then(() => {
+            if (this.bot.pvp) this.bot.pvp.attack(entity);
+          });
+        }
+      }
+      
+      // Handle following - follow player and protect them
+      if (this.state.isFollowing && this.state.followTarget) {
+        // Check if the player is still visible
+        const player = this.bot.players[this.state.followTarget];
+        
+        if (!player || !player.entity) {
+          logger.warn(`${this.bot.username} lost sight of ${this.state.followTarget}`);
+          return;
+        }
+        
+        // If already attacking a mob, don't look for new ones
+        if (this.bot.pvp?.target) return;
+        
+        // Find hostile entities near the player
+        const filter = e => {
+          return (e.type === 'mob' && this.isHostileMob(e)) &&
+                 e.position.distanceTo(player.entity.position) < this.protectionRadius;
+        };
+        
+        const entity = this.bot.nearestEntity(filter);
+        if (entity) {
+          logger.info(`${this.bot.username} detected ${entity.name} near ${this.state.followTarget}, attacking`);
+          
+          // Equip best weapon
+          this.equipBestWeapon().then(() => {
+            this.bot.chat(`I see a ${entity.name} near you, attacking!`);
+            if (this.bot.pvp) this.bot.pvp.attack(entity);
+          });
+        }
+      }
+    });
+    
+    // After stopping an attack, return to guard position
+    this.bot.on('stoppedAttacking', () => {
+      if (this.state.isGuarding && this.state.guardPosition) {
+        this.moveToGuardPos();
       }
     });
     
@@ -64,21 +155,144 @@ class ProtectorBot extends BaseBot {
       }
     });
     
-    // Handle entities that come into view
-    this.bot.on('entitySpawn', (entity) => {
-      if (this.isHostileMob(entity)) {
-        this.handleNewThreat(entity);
-      }
+    // Handle death
+    this.bot.on('death', () => {
+      logger.warn(`${this.bot.username} died, will try to return to duty after respawn`);
+      this.bot.chat("I've been defeated, but I'll return to duty after respawning!");
+    });
+    
+    // Handle respawn
+    this.bot.on('spawn', () => {
+      // Wait a bit before re-equipping gear
+      setTimeout(() => {
+        this.checkAndEquipBestGear();
+        
+        // Return to guard position if we were guarding
+        if (this.state.isGuarding && this.state.guardPosition) {
+          logger.info(`${this.bot.username} respawned, returning to guard position`);
+          this.moveToGuardPos();
+        }
+        
+        // Resume following if we were following someone
+        if (this.state.isFollowing && this.state.followTarget) {
+          logger.info(`${this.bot.username} respawned, resuming following ${this.state.followTarget}`);
+          this.followPlayer(this.state.followTarget);
+        }
+      }, 1000);
     });
   }
   
   /**
-   * Check if an entity is a hostile mob
-   * @param {Object} entity - Entity to check
-   * @returns {boolean} - Whether the entity is hostile
+   * Move to the guard position
    */
-  isHostileMob(entity) {
-    return this.isHostileEntity(entity);
+  moveToGuardPos() {
+    if (!this.state.guardPosition) return;
+    
+    logger.info(`${this.bot.username} moving to guard position at ${this.state.guardPosition.x}, ${this.state.guardPosition.y}, ${this.state.guardPosition.z}`);
+    
+    // Use pathfinder to move to the guard position
+    const mcData = require('minecraft-data')(this.bot.version);
+    const movements = new Movements(this.bot, mcData);
+    movements.scafoldingBlocks = ['dirt', 'cobblestone', 'stone'];
+    this.bot.pathfinder.setMovements(movements);
+    this.bot.pathfinder.setGoal(new goals.GoalBlock(
+      this.state.guardPosition.x,
+      this.state.guardPosition.y,
+      this.state.guardPosition.z
+    ));
+  }
+  
+  /**
+   * Start guarding a location
+   * @param {Object} position - Position to guard (x, y, z)
+   */
+  startGuardingPosition(position) {
+    logger.info(`${this.bot.username} starting to guard position ${position.x}, ${position.y}, ${position.z}`);
+    
+    // Update state
+    this.state.guardPosition = position.clone();
+    this.state.isGuarding = true;
+    this.state.isFollowing = false;
+    this.state.followTarget = null;
+    this.state.guardTarget = {
+      type: 'location',
+      ...position,
+    };
+    this.state.currentTask = `Guarding location ${position.x}, ${position.y}, ${position.z}`;
+    
+    // Move to guard position
+    this.moveToGuardPos();
+    
+    // Equip best gear
+    this.checkAndEquipBestGear();
+    
+    return `Guarding position at ${position.x}, ${position.y}, ${position.z}`;
+  }
+  
+  /**
+   * Start following and protecting a player
+   * @param {string} username - Username of player to follow
+   */
+  followPlayer(username) {
+    logger.info(`${this.bot.username} starting to follow and protect ${username}`);
+    
+    const player = this.bot.players[username];
+    
+    if (!player || !player.entity) {
+      return `I can't see ${username}`;
+    }
+    
+    // Update state
+    this.state.isGuarding = false;
+    this.state.guardPosition = null;
+    this.state.isFollowing = true;
+    this.state.followTarget = username;
+    this.state.guardTarget = {
+      type: 'player',
+      username,
+    };
+    this.state.currentTask = `Following and protecting ${username}`;
+    
+    // Set up pathfinder to follow the player
+    const mcData = require('minecraft-data')(this.bot.version);
+    const movements = new Movements(this.bot, mcData);
+    movements.scafoldingBlocks = ['dirt', 'cobblestone', 'stone'];
+    this.bot.pathfinder.setMovements(movements);
+    
+    const goal = new goals.GoalFollow(player.entity, 2);
+    this.bot.pathfinder.setGoal(goal, true);
+    
+    // Equip best gear
+    this.checkAndEquipBestGear();
+    
+    return `Following and protecting ${username}`;
+  }
+  
+  /**
+   * Stop guarding/following
+   */
+  stopGuarding() {
+    logger.info(`${this.bot.username} stopped guarding/following`);
+    
+    // Update state
+    this.state.isGuarding = false;
+    this.state.guardPosition = null;
+    this.state.isFollowing = false;
+    this.state.followTarget = null;
+    this.state.guardTarget = null;
+    this.state.currentTask = null;
+    
+    // Clear patrol interval if it exists
+    if (this.patrolInterval) {
+      clearInterval(this.patrolInterval);
+      this.patrolInterval = null;
+    }
+    
+    // Stop pathfinding and combat
+    if (this.bot.pvp) this.bot.pvp.stop();
+    this.bot.pathfinder.setGoal(null);
+    
+    return "I've stopped guarding/following";
   }
   
   /**
@@ -86,6 +300,9 @@ class ProtectorBot extends BaseBot {
    */
   scanForThreats() {
     try {
+      // Skip if already in combat
+      if (this.bot.pvp?.target) return;
+      
       // Get all entities within protection radius
       const entities = Object.values(this.bot.entities);
       const botPosition = this.bot.entity.position;
@@ -115,11 +332,6 @@ class ProtectorBot extends BaseBot {
           'medium'
         );
       }
-      
-      // Log detected threats for debugging
-      if (this.state.threatsDetected.length > 0) {
-        logger.debug(`${this.bot.username} detected ${this.state.threatsDetected.length} threats nearby`);
-      }
     } catch (err) {
       logger.error(`Error scanning for threats:`, err);
     }
@@ -135,7 +347,7 @@ class ProtectorBot extends BaseBot {
       
       if (attacker) {
         // Log the attack
-        logger.info(`${this.bot.username} was attacked by ${attacker.name} (${attacker.username || 'mob'})`);
+        logger.info(`${this.bot.username} was attacked by ${attacker.name || attacker.username}`);
         
         // If health is below threshold, retreat
         if (this.bot.health <= this.retreatHealthThreshold) {
@@ -143,9 +355,12 @@ class ProtectorBot extends BaseBot {
           return;
         }
         
-        // Otherwise, fight back if it's a hostile mob
-        if (this.isHostileMob(attacker)) {
-          this.attackEntity(attacker);
+        // Otherwise, fight back
+        if (this.isHostileMob(attacker) || (attacker.type === 'player' && attacker.username !== this.globalConfig.owner.minecraftUsername)) {
+          // Equip best weapon before attacking
+          this.equipBestWeapon().then(() => {
+            if (this.bot.pvp) this.bot.pvp.attack(attacker);
+          });
         }
       }
     } catch (err) {
@@ -185,183 +400,22 @@ class ProtectorBot extends BaseBot {
   }
   
   /**
-   * Handle new threat that has been detected
-   * @param {Object} entity - The hostile entity
+   * Check if an entity is a hostile mob
+   * @param {Object} entity - Entity to check
+   * @returns {boolean} - Whether the entity is hostile
    */
-  handleNewThreat(entity) {
-    try {
-      // Check if we're guarding something
-      if (!this.state.guardTarget) return;
-      
-      // Check if the threat is within protection radius
-      let guardPosition;
-      
-      if (this.state.guardTarget.type === 'location') {
-        guardPosition = new Vec3(
-          this.state.guardTarget.x,
-          this.state.guardTarget.y,
-          this.state.guardTarget.z
-        );
-      } else if (this.state.guardTarget.type === 'player') {
-        const player = this.bot.players[this.state.guardTarget.username];
-        if (!player || !player.entity) return;
-        guardPosition = player.entity.position;
-      } else {
-        return;
-      }
-      
-      const distance = entity.position.distanceTo(guardPosition);
-      
-      if (distance <= this.protectionRadius) {
-        // Add to threats
-        this.state.threatsDetected.push({
-          id: entity.id,
-          type: entity.name,
-          position: entity.position,
-          health: entity.health,
-          distance: entity.position.distanceTo(this.bot.entity.position),
-        });
-        
-        // Share threat information
-        this.dataStore.addThreat(
-          entity.name, 
-          { x: entity.position.x, y: entity.position.y, z: entity.position.z }, 
-          'medium'
-        );
-        
-        // Handle the threat
-        this.handleThreats();
-      }
-    } catch (err) {
-      logger.error(`Error handling new threat:`, err);
-    }
-  }
-  
-  /**
-   * Handle threats in the area
-   */
-  handleThreats() {
-    try {
-      // Sort threats by proximity
-      const sortedThreats = [...this.state.threatsDetected]
-        .sort((a, b) => a.distance - b.distance);
-      
-      if (sortedThreats.length === 0) return;
-      
-      // Get the closest threat
-      const closestThreat = sortedThreats[0];
-      
-      // Make sure this entity still exists
-      const entity = this.bot.entities[closestThreat.id];
-      if (!entity) {
-        // Remove from threats
-        this.state.threatsDetected = this.state.threatsDetected
-          .filter(threat => threat.id !== closestThreat.id);
-        return;
-      }
-      
-      // Attack the threat
-      this.attackEntity(entity);
-    } catch (err) {
-      logger.error(`Error handling threats:`, err);
-    }
-  }
-  
-  /**
-   * Attack a specific entity
-   * @param {Object} entity - Entity to attack
-   */
-  async attackEntity(entity) {
-    try {
-      // Don't attack if already attacking the same entity
-      if (this.state.currentTask === `Attacking ${entity.name}`) {
-        return;
-      }
-      
-      logger.info(`${this.bot.username} attacking ${entity.name}`);
-      
-      // Update current task
-      this.state.currentTask = `Attacking ${entity.name}`;
-      
-      // Ensure we have the best weapon equipped
-      await this.equipBestWeapon();
-      
-      // Clear any previous goals
-      this.bot.pathfinder.setGoal(null);
-      
-      // Go to the entity
-      this.bot.pathfinder.setMovements(this.movements);
-      this.bot.pathfinder.setGoal(new goals.GoalFollow(entity, 2));
-      
-      // Attack when in range
-      const attackInterval = setInterval(() => {
-        if (!entity || !entity.isValid) {
-          clearInterval(attackInterval);
-          this.bot.pathfinder.setGoal(null);
-          this.state.currentTask = null;
-          
-          // Remove from threats
-          this.state.threatsDetected = this.state.threatsDetected
-            .filter(threat => threat.id !== entity.id);
-          
-          // Remove from shared threats
-          if (entity && entity.position) {
-            this.dataStore.removeThreat(
-              entity.name, 
-              { x: entity.position.x, y: entity.position.y, z: entity.position.z }
-            );
-          }
-          
-          logger.info(`${this.bot.username} defeated ${entity.name || 'entity'}`);
-          
-          // Continue patrolling if we were patrolling
-          if (this.state.patrolPoints && this.state.patrolPoints.length > 0) {
-            this.continuePatrol();
-          }
-          return;
-        }
-        
-        try {
-          const distance = this.bot.entity.position.distanceTo(entity.position);
-          
-          if (distance <= 3) {
-            // Attack
-            this.bot.attack(entity);
-            logger.debug(`${this.bot.username} attacking ${entity.name} at distance ${distance.toFixed(2)}`);
-          } else if (distance > 10) {
-            // If entity is too far, update goal to chase it
-            this.bot.pathfinder.setGoal(new goals.GoalFollow(entity, 2), true);
-          }
-          
-          // Check health
-          if (this.bot.health <= this.retreatHealthThreshold) {
-            clearInterval(attackInterval);
-            this.bot.pathfinder.setGoal(null);
-            this.retreat();
-          }
-        } catch (error) {
-          logger.warn(`Error during attack loop: ${error.message}`);
-        }
-      }, 250); // Attack more frequently (every 250ms)
-      
-      // Stop attack after timeout
-      setTimeout(() => {
-        clearInterval(attackInterval);
-        if (this.state.currentTask === `Attacking ${entity.name}`) {
-          this.bot.pathfinder.setGoal(null);
-          this.state.currentTask = null;
-          logger.warn(`${this.bot.username} gave up attacking ${entity.name} after timeout`);
-          
-          // Continue patrolling if we were patrolling
-          if (this.state.patrolPoints && this.state.patrolPoints.length > 0) {
-            this.continuePatrol();
-          }
-        }
-      }, 30000);
-    } catch (err) {
-      logger.error(`Error attacking entity:`, err);
-      this.state.currentTask = null;
-    }
+  isHostileMob(entity) {
+    if (!entity || !entity.name) return false;
+    
+    const hostileTypes = [
+      'zombie', 'skeleton', 'spider', 'creeper', 'enderman', 
+      'witch', 'slime', 'cave_spider', 'silverfish', 'zombie_villager',
+      'husk', 'stray', 'evoker', 'vex', 'vindicator', 'illusioner',
+      'pillager', 'ravager', 'phantom', 'drowned', 'blaze', 'ghast', 'magma_cube'
+    ];
+    
+    return entity.type === 'mob' && 
+      hostileTypes.some(type => entity.name.toLowerCase().includes(type));
   }
   
   /**
@@ -372,6 +426,9 @@ class ProtectorBot extends BaseBot {
       logger.info(`${this.bot.username} retreating due to low health (${this.bot.health})`);
       
       this.state.currentTask = 'Retreating';
+      
+      // Stop current attack
+      this.bot.pvp.stop();
       
       // Ensure best gear is equipped before retreating
       this.checkAndEquipBestGear();
@@ -404,6 +461,13 @@ class ProtectorBot extends BaseBot {
             .then(() => {
               this.state.currentTask = null;
               logger.info(`${this.bot.username} reached safe zone`);
+              
+              // After health restored, return to guard position if applicable
+              if (this.state.isGuarding && this.state.guardPosition) {
+                setTimeout(() => {
+                  this.moveToGuardPos();
+                }, 5000);
+              }
             })
             .catch(err => {
               logger.error(`Error retreating to safe zone:`, err);
@@ -444,6 +508,13 @@ class ProtectorBot extends BaseBot {
               .then(() => {
                 this.state.currentTask = null;
                 logger.info(`${this.bot.username} retreated from threats`);
+                
+                // After retreat, return to guard position if applicable
+                if (this.state.isGuarding && this.state.guardPosition) {
+                  setTimeout(() => {
+                    this.moveToGuardPos();
+                  }, 5000);
+                }
               })
               .catch(err => {
                 logger.error(`Error retreating from threats:`, err);
@@ -459,161 +530,6 @@ class ProtectorBot extends BaseBot {
   }
   
   /**
-   * Guard a specific location
-   * @param {Object} location - Location to guard
-   */
-  guardLocation(location) {
-    try {
-      logger.info(`${this.bot.username} guarding location ${location.x},${location.y},${location.z}`);
-      
-      this.state.guardTarget = {
-        type: 'location',
-        ...location,
-      };
-      
-      this.state.currentTask = `Guarding location ${location.x},${location.y},${location.z}`;
-      
-      // Go to the location
-      this.goToLocation(location)
-        .then(() => {
-          // Start patrol around the location when we reach it
-          const radius = 5;
-          this.startPatrol(
-            [
-              { x: location.x + radius, y: location.y, z: location.z },
-              { x: location.x, y: location.y, z: location.z + radius },
-              { x: location.x - radius, y: location.y, z: location.z },
-              { x: location.x, y: location.y, z: location.z - radius },
-            ]
-          );
-        })
-        .catch(err => {
-          logger.error(`Error going to guard location:`, err);
-        });
-    } catch (err) {
-      logger.error(`Error guarding location:`, err);
-    }
-  }
-  
-  /**
-   * Guard a specific player
-   * @param {string} username - Username of player to guard
-   */
-  guardPlayer(username) {
-    try {
-      logger.info(`${this.bot.username} guarding player ${username}`);
-      
-      this.state.guardTarget = {
-        type: 'player',
-        username,
-      };
-      
-      this.state.currentTask = `Guarding player ${username}`;
-      
-      // Find player
-      const player = this.bot.players[username];
-      
-      if (!player || !player.entity) {
-        logger.warn(`${this.bot.username} can't see player ${username}`);
-        return;
-      }
-      
-      // Follow the player
-      this.bot.pathfinder.setMovements(this.movements);
-      this.bot.pathfinder.setGoal(new goals.GoalFollow(player.entity, 3), true);
-    } catch (err) {
-      logger.error(`Error guarding player:`, err);
-    }
-  }
-  
-  /**
-   * Start patrolling a set of points
-   * @param {Array} points - Points to patrol
-   */
-  startPatrol(points) {
-    try {
-      if (!points || points.length === 0) {
-        logger.warn(`${this.bot.username} can't patrol with no points`);
-        return;
-      }
-      
-      logger.info(`${this.bot.username} starting patrol with ${points.length} points`);
-      
-      this.state.patrolPoints = [...points];
-      this.state.currentPatrolIndex = 0;
-      
-      // Go to first point
-      this.continuePatrol();
-    } catch (err) {
-      logger.error(`Error starting patrol:`, err);
-    }
-  }
-  
-  /**
-   * Continue patrolling to next point
-   */
-  continuePatrol() {
-    try {
-      // Skip if we're attacking or retreating
-      if (this.state.currentTask && 
-         (this.state.currentTask.includes('Attacking') || 
-          this.state.currentTask === 'Retreating')) {
-        return;
-      }
-      
-      if (this.state.patrolPoints.length === 0) return;
-      
-      const nextPoint = this.state.patrolPoints[this.state.currentPatrolIndex];
-      
-      this.state.currentTask = `Patrolling (${this.state.currentPatrolIndex + 1}/${this.state.patrolPoints.length})`;
-      
-      // Go to next point
-      this.goToLocation(nextPoint)
-        .then(() => {
-          // Scan for threats at patrol point
-          this.scanForThreats();
-          
-          // Handle any threats before continuing patrol
-          if (this.state.threatsDetected.length > 0) {
-            this.handleThreats();
-            return; // Patrol will continue after threat is handled
-          }
-        
-          // Move to next point
-          this.state.currentPatrolIndex = (this.state.currentPatrolIndex + 1) % this.state.patrolPoints.length;
-          
-          // Small delay before continuing
-          setTimeout(() => {
-            this.continuePatrol();
-          }, 2000);
-        })
-        .catch(err => {
-          logger.error(`Error during patrol:`, err);
-          
-          // Skip problematic point
-          this.state.currentPatrolIndex = (this.state.currentPatrolIndex + 1) % this.state.patrolPoints.length;
-          
-          setTimeout(() => {
-            this.continuePatrol();
-          }, 2000);
-        });
-    } catch (err) {
-      logger.error(`Error continuing patrol:`, err);
-    }
-  }
-  
-  /**
-   * Stop guarding
-   */
-  stopGuarding() {
-    this.state.guardTarget = null;
-    this.state.patrolPoints = [];
-    this.state.currentTask = null;
-    this.bot.pathfinder.setGoal(null);
-    logger.info(`${this.bot.username} stopped guarding`);
-  }
-  
-  /**
    * Get the current status of the protector bot
    * @returns {Object} - Bot status information
    */
@@ -623,6 +539,9 @@ class ProtectorBot extends BaseBot {
       type: 'protector',
       guardTarget: this.state.guardTarget,
       threats: this.state.threatsDetected.length,
+      isGuarding: this.state.isGuarding,
+      isFollowing: this.state.isFollowing,
+      followTarget: this.state.followTarget
     };
   }
   
@@ -646,7 +565,7 @@ class ProtectorBot extends BaseBot {
     }
     
     // Protector-specific commands
-    const protectorCommands = ['guard', 'patrol'];
+    const protectorCommands = ['guard', 'patrol', 'stop', 'test'];
     
     // If not a protector command, don't respond
     if (!protectorCommands.includes(command)) {
@@ -657,14 +576,15 @@ class ProtectorBot extends BaseBot {
     switch (command) {
       case 'guard':
         if (args.length === 0) {
-          return 'Invalid arguments. Usage: guard <x> <y> <z> OR guard <player>';
+          // Guard current position
+          const position = this.bot.entity.position.clone();
+          return this.startGuardingPosition(position);
         }
         
         if (args.length === 1) {
           // Guard player
           const playerName = args[0];
-          this.guardPlayer(playerName);
-          return `Guarding player ${playerName}`;
+          return this.followPlayer(playerName);
         } else if (args.length === 3) {
           // Guard location
           const x = parseInt(args[0]);
@@ -676,8 +596,7 @@ class ProtectorBot extends BaseBot {
           }
           
           const location = { x, y, z };
-          this.guardLocation(location);
-          return `Guarding location ${x},${y},${z}`;
+          return this.startGuardingPosition(location);
         } else {
           return 'Invalid arguments. Usage: guard <x> <y> <z> OR guard <player>';
         }
@@ -705,150 +624,103 @@ class ProtectorBot extends BaseBot {
           return 'Invalid arguments. Usage: patrol <x1> <z1> <x2> <z2> ...';
         }
       
+      case 'stop':
+        // Stop any current guard/follow action or combat
+        if (this.state.isGuarding || this.state.isFollowing || this.bot.pvp?.target) {
+          return this.stopGuarding();
+        } else {
+          return "I'm not currently guarding or following anything.";
+        }
+      
+      case 'test':
+        // Test if PVP plugin is loaded correctly
+        if (this.bot.pvp) {
+          return `PVP plugin is loaded correctly. Available methods: ${Object.keys(this.bot.pvp).join(', ')}`;
+        } else {
+          return "PVP plugin is NOT loaded correctly!";
+        }
+        
       default:
         return null;
     }
   }
-
+  
   /**
-   * Defend a specific target (player or bot)
-   * @param {string} targetName - Name of the target to defend
-   * @param {string} targetType - Type of target ('player' or 'bot')
+   * Start patrolling a set of points
+   * @param {Array} points - Points to patrol
+   * @returns {string} - Status message
    */
-  async defendTarget(targetName, targetType) {
+  startPatrol(points) {
     try {
-      logger.info(`${this.bot.username} defending ${targetType} ${targetName}`);
+      if (!points || points.length === 0) {
+        logger.warn(`${this.bot.username} can't patrol with no points`);
+        return "Cannot patrol with no points specified";
+      }
       
-      this.state.guardTarget = {
-        type: targetType,
-        name: targetName,
-      };
+      logger.info(`${this.bot.username} starting patrol with ${points.length} points`);
       
-      this.state.currentTask = `Defending ${targetType} ${targetName}`;
+      // Update state
+      this.state.patrolPoints = [...points];
+      this.state.currentPatrolIndex = 0;
+      this.state.isGuarding = false;
+      this.state.guardPosition = null;
+      this.state.isFollowing = false;
+      this.state.followTarget = null;
+      this.state.currentTask = `Patrolling (1/${points.length} points)`;
       
-      // Function to follow the target
-      const followTarget = async () => {
-        let targetEntity = null;
+      // Stop any current combat
+      this.bot.pvp.stop();
+      
+      // Start going to the first point
+      const point = points[0];
+      
+      // Configure pathfinder
+      const mcData = require('minecraft-data')(this.bot.version);
+      const movements = new Movements(this.bot, mcData);
+      movements.scafoldingBlocks = ['dirt', 'cobblestone', 'stone'];
+      this.bot.pathfinder.setMovements(movements);
+      
+      // Set goal to the first patrol point
+      this.bot.pathfinder.setGoal(new goals.GoalBlock(point.x, point.y, point.z));
+      
+      // Setup periodic check to move to next point
+      this.patrolInterval = setInterval(() => {
+        // If we're in combat, don't continue patrol yet
+        if (this.bot.pvp?.target) return;
         
-        if (targetType === 'player') {
-          const player = this.bot.players[targetName];
-          if (player && player.entity) {
-            targetEntity = player.entity;
-          }
-        } else if (targetType === 'bot') {
-          // Try to get bot information from data store
-          const botInfo = this.dataStore.getBot(targetName);
-          if (botInfo && botInfo.position) {
-            // We don't have a direct entity, so navigate to position
-            await this.goToLocation(botInfo.position, 5);
-            return;
-          }
-        }
-        
-        if (targetEntity) {
-          // Check if we're close enough already
-          const distance = this.bot.entity.position.distanceTo(targetEntity.position);
+        // If we're not moving and not at the target, we need to go to the next point
+        if (!this.bot.pathfinder.isMoving()) {
+          const currentPoint = this.state.patrolPoints[this.state.currentPatrolIndex];
+          const botPos = this.bot.entity.position;
           
-          if (distance > 5) {
-            // Follow the target
-            await this.goToLocation({ 
-              x: targetEntity.position.x, 
-              y: targetEntity.position.y, 
-              z: targetEntity.position.z 
-            }, 5);
-          }
+          // Check if we've reached the current point (within 1 block)
+          const distanceToTarget = Math.sqrt(
+            Math.pow(currentPoint.x - botPos.x, 2) + 
+            Math.pow(currentPoint.y - botPos.y, 2) + 
+            Math.pow(currentPoint.z - botPos.z, 2)
+          );
           
-          // Scan for threats around the target
-          const threats = this.findThreatsAroundPosition(targetEntity.position, this.protectionRadius);
-          
-          // Handle any threats
-          if (threats.length > 0) {
-            logger.info(`${this.bot.username} detected ${threats.length} threats near ${targetName}`);
+          if (distanceToTarget < 1) {
+            // Move to next point
+            this.state.currentPatrolIndex = (this.state.currentPatrolIndex + 1) % this.state.patrolPoints.length;
+            const nextPoint = this.state.patrolPoints[this.state.currentPatrolIndex];
             
-            // Attack the closest threat
-            threats.sort((a, b) => {
-              return a.position.distanceTo(targetEntity.position) - 
-                    b.position.distanceTo(targetEntity.position);
-            });
+            logger.info(`${this.bot.username} moving to patrol point ${this.state.currentPatrolIndex + 1}/${this.state.patrolPoints.length}`);
+            this.state.currentTask = `Patrolling (${this.state.currentPatrolIndex + 1}/${this.state.patrolPoints.length} points)`;
             
-            await this.attackEntity(threats[0]);
+            // Set new goal
+            this.bot.pathfinder.setGoal(new goals.GoalBlock(nextPoint.x, nextPoint.y, nextPoint.z));
+          } else {
+            // We're stuck, try going to the point again
+            this.bot.pathfinder.setGoal(new goals.GoalBlock(currentPoint.x, currentPoint.y, currentPoint.z));
           }
         }
-      };
+      }, 3000); // Check every 3 seconds
       
-      // Start following loop
-      const defendInterval = setInterval(async () => {
-        // Check if we're still defending
-        if (!this.state.guardTarget || this.state.guardTarget.name !== targetName) {
-          clearInterval(defendInterval);
-          return;
-        }
-        
-        await followTarget().catch(err => {
-          logger.warn(`Error following ${targetType} ${targetName}:`, err);
-        });
-      }, 2000);
-      
-      // Set a 5-minute timeout to avoid infinite defense
-      setTimeout(() => {
-        if (this.state.guardTarget && this.state.guardTarget.name === targetName) {
-          logger.info(`${this.bot.username} stopping defense of ${targetName} after timeout`);
-          clearInterval(defendInterval);
-          this.state.guardTarget = null;
-          this.state.currentTask = null;
-        }
-      }, 300000); // 5 minutes
-    } catch (error) {
-      logger.error(`Error defending ${targetName}:`, error);
-      this.state.guardTarget = null;
-      this.state.currentTask = null;
-    }
-  }
-
-  /**
-   * Find threats around a specific position
-   * @param {Object} position - Position to scan around
-   * @param {number} radius - Radius to scan
-   * @returns {Array} - List of hostile entities
-   */
-  findThreatsAroundPosition(position, radius) {
-    const entities = Object.values(this.bot.entities);
-    
-    // Filter for hostile mobs within range
-    return entities.filter(entity => {
-      if (!this.isHostileMob(entity)) return false;
-      
-      const distance = entity.position.distanceTo(position);
-      return distance <= radius;
-    });
-  }
-
-  /**
-   * Retreat to a specific location
-   * @param {Object} location - Location to retreat to
-   * @returns {Promise<boolean>} - Whether the retreat was successful
-   */
-  async retreatTo(location) {
-    try {
-      this.state.currentTask = `Retreating to ${location.x},${location.y},${location.z}`;
-      logger.info(`${this.bot.username} retreating to ${location.x},${location.y},${location.z}`);
-      
-      // Stop any current guard activities
-      this.stopGuarding();
-      
-      // Make sure we have the best gear equipped
-      this.checkAndEquipBestGear();
-      
-      // Go to the retreat location
-      await this.goToLocation(location);
-      
-      logger.info(`${this.bot.username} reached retreat location`);
-      this.state.currentTask = null;
-      return true;
-    } catch (error) {
-      logger.error(`Error retreating to location:`, error);
-      this.state.currentTask = null;
-      return false;
+      return `Started patrolling ${points.length} points`;
+    } catch (err) {
+      logger.error(`Error starting patrol:`, err);
+      return `Error starting patrol: ${err.message}`;
     }
   }
 }
