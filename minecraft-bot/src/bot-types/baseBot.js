@@ -3,7 +3,6 @@
  * Provides common functionality that all bots share
  */
 
-const AutoEat = require('mineflayer-auto-eat').plugin;
 const { goals } = require('mineflayer-pathfinder');
 const Vec3 = require('vec3');
 const { logger } = require('../utils/logger');
@@ -25,23 +24,16 @@ class BaseBot {
     this.taskQueue = [];
     
     // Initialize base functionality
-    this.setupAutoEat();
     this.setupEventHandlers();
-  }
-  
-  /**
-   * Set up auto eat functionality
-   */
-  setupAutoEat() {
-    // Load the plugin
-    this.bot.loadPlugin(AutoEat);
     
-    // Configure auto eat
-    this.bot.autoEat.options = {
-      priority: 'foodPoints',
-      startAt: 14,
-      bannedFood: [],
-    };
+    // Configure auto-eat (already loaded in botSystem.js)
+    if (this.bot.autoEat) {
+      this.bot.autoEat.options = {
+        priority: 'foodPoints',
+        startAt: 14,
+        bannedFood: [],
+      };
+    }
   }
   
   /**
@@ -50,7 +42,7 @@ class BaseBot {
   setupEventHandlers() {
     // Handle health and hunger changes
     this.bot.on('health', () => {
-      if (this.bot.food < 15) {
+      if (this.bot.food < 15 && this.bot.autoEat) {
         this.bot.autoEat.enable();
       }
     });
@@ -70,7 +62,9 @@ class BaseBot {
    */
   equipBestArmor() {
     try {
-      this.bot.armorManager.equipAll();
+      if (this.bot.armorManager) {
+        this.bot.armorManager.equipAll();
+      }
     } catch (err) {
       logger.error(`Error equipping armor: ${err.message}`);
     }
@@ -280,7 +274,9 @@ class BaseBot {
     this.taskQueue = [];
     
     // Stop any auto activities
-    this.bot.autoEat.disable();
+    if (this.bot.autoEat) {
+      this.bot.autoEat.disable();
+    }
     
     logger.info(`${this.bot.username} stopped all tasks`);
   }
