@@ -27,6 +27,7 @@ class BaseBot {
       stuckTime: 0,
       lastActivity: Date.now(),
       isMoving: false,
+      lastArmorCheck: 0,
     };
     
     // Setup pathfinding
@@ -36,6 +37,9 @@ class BaseBot {
     
     // Setup event handlers
     this.setupEvents();
+    
+    // Setup periodic armor check
+    this.setupArmorManager();
   }
   
   /**
@@ -96,6 +100,188 @@ class BaseBot {
     this.bot.on('error', (err) => {
       logger.error(`Bot ${this.bot.username} error:`, err);
     });
+  }
+  
+  /**
+   * Setup armor manager periodic checks
+   */
+  setupArmorManager() {
+    // Perform periodic armor checks
+    this.bot.on('physicsTick', () => {
+      // Check armor every 5 minutes (6000 ticks)
+      if (this.bot.time.age % 6000 === 0) {
+        this.checkAndEquipBestGear();
+      }
+    });
+    
+    // Check gear after collecting or crafting items
+    this.bot.inventory.on('updateSlot', () => {
+      // Limit checks to once every 5 seconds to avoid spam
+      const now = Date.now();
+      if (now - this.state.lastArmorCheck > 5000) {
+        this.state.lastArmorCheck = now;
+        this.checkAndEquipBestGear();
+      }
+    });
+  }
+  
+  /**
+   * Check and equip the best gear available
+   */
+  checkAndEquipBestGear() {
+    try {
+      // Use the armor manager plugin
+      this.bot.armorManager.equipAll();
+      
+      // For tools and weapons, we need custom logic
+      this.equipBestTool();
+      
+      // Check for shield in off-hand
+      this.equipBestShield();
+    } catch (error) {
+      logger.error(`Error equipping best gear:`, error);
+    }
+  }
+  
+  /**
+   * Equip the best tool for the current situation
+   */
+  equipBestTool() {
+    try {
+      // If we're in combat, equip a weapon
+      if (this.isInCombat()) {
+        this.equipBestWeapon();
+      } 
+      // Otherwise, equip appropriate tool for the current task
+      else if (this.state.currentTask && this.state.currentTask.includes('mining')) {
+        this.equipBestToolOfType(['pickaxe']);
+      } else if (this.state.currentTask && this.state.currentTask.includes('chopping')) {
+        this.equipBestToolOfType(['axe']);
+      } else if (this.state.currentTask && this.state.currentTask.includes('digging')) {
+        this.equipBestToolOfType(['shovel']);
+      }
+    } catch (error) {
+      logger.error(`Error equipping best tool:`, error);
+    }
+  }
+  
+  /**
+   * Check if the bot is currently in combat
+   * @returns {boolean} - Whether the bot is in combat
+   */
+  isInCombat() {
+    // Simple check for any hostile mob within attack range
+    for (const entity of Object.values(this.bot.entities)) {
+      if (this.isHostileEntity(entity)) {
+        const distance = entity.position.distanceTo(this.bot.entity.position);
+        if (distance < 5) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+  
+  /**
+   * Check if an entity is hostile
+   * @param {Object} entity - Entity to check
+   * @returns {boolean} - Whether the entity is hostile
+   */
+  isHostileEntity(entity) {
+    const hostileTypes = [
+      'zombie', 'skeleton', 'spider', 'creeper', 'enderman', 
+      'witch', 'slime', 'cave_spider', 'silverfish', 'zombie_villager'
+    ];
+    
+    return entity && entity.type === 'mob' && 
+      hostileTypes.some(type => entity.name && entity.name.toLowerCase().includes(type));
+  }
+  
+  /**
+   * Equip the best weapon available
+   * @returns {Promise<boolean>} - Whether a weapon was equipped
+   */
+  async equipBestWeapon() {
+    try {
+      // Find weapons in inventory
+      const weapons = this.bot.inventory.items().filter(item => 
+        item.name.includes('sword') || item.name.includes('axe')
+      );
+      
+      if (weapons.length === 0) {
+        return false;
+      }
+      
+      // Order by material quality
+      const materialOrder = ['netherite', 'diamond', 'iron', 'stone', 'golden', 'wooden'];
+      
+      // Sort weapons by material quality
+      weapons.sort((a, b) => {
+        const getMaterialIndex = (name) => {
+          for (let i = 0; i < materialOrder.length; i++) {
+            if (name.includes(materialOrder[i])) {
+              return i;
+            }
+          }
+          return materialOrder.length; // Default to lowest priority
+        };
+        
+        return getMaterialIndex(a.name) - getMaterialIndex(b.name);
+      });
+      
+      // Equip the best weapon
+      await this.bot.equip(weapons[0], 'hand');
+      logger.info(`${this.bot.username} equipped ${weapons[0].name}`);
+      
+      return true;
+    } catch (error) {
+      logger.error(`Error equipping weapon:`, error);
+      return false;
+    }
+  }
+  
+  /**
+   * Equip the best tool of a specific type
+   * @param {Array<string>} toolTypes - Array of tool types to look for
+   * @returns {Promise<boolean>} - Whether a tool was equipped
+   */
+  async equipBestToolOfType(toolTypes) {
+    try {
+      // Find tools of the specified types
+      const tools = this.bot.inventory.items().filter(item => 
+        toolTypes.some(toolType => item.name.includes(toolType))
+      );
+      
+      if (tools.length === 0) {
+        return false;
+      }
+      
+      // Order by material quality
+      const materialOrder = ['netherite', 'diamond', 'iron', 'stone', 'golden', 'wooden'];
+      
+      // Sort tools by material quality
+      tools.sort((a, b) => {
+        const getMaterialIndex = (name) => {
+          for (let i = 0; i < materialOrder.length; i++) {
+            if (name.includes(materialOrder[i])) {
+              return i;
+            }
+          }
+          return materialOrder.length; // Default to lowest priority
+        };
+        
+        return getMaterialIndex(a.name) - getMaterialIndex(b.name);
+      });
+      
+      // Equip the best tool
+      await this.bot.equip(tools[0], 'hand');
+      logger.info(`${this.bot.username} equipped ${tools[0].name}`);
+      
+      return true;
+    } catch (error) {
+      logger.error(`Error equipping tool:`, error);
+      return false;
+    }
   }
   
   /**
@@ -586,6 +772,37 @@ class BaseBot {
     // This is a stub - in a real implementation, you would
     // update the todo.md file to mark commands as completed
     logger.debug(`Implemented command ${command} for bot type ${botType}`);
+  }
+  
+  /**
+   * Equip the best shield available in off-hand
+   * @returns {Promise<boolean>} - Whether a shield was equipped
+   */
+  async equipBestShield() {
+    try {
+      // Find shields in inventory
+      const shields = this.bot.inventory.items().filter(item => 
+        item.name.includes('shield')
+      );
+      
+      if (shields.length === 0) {
+        return false;
+      }
+      
+      // Check if shield is already equipped in off-hand
+      const currentOffhand = this.bot.inventory.slots[45]; // 45 is the off-hand slot
+      if (currentOffhand && currentOffhand.name.includes('shield')) {
+        return true; // Shield already equipped
+      }
+      
+      // Equip the shield in off-hand
+      await this.bot.equip(shields[0], 'off-hand');
+      logger.info(`${this.bot.username} equipped ${shields[0].name} in off-hand`);
+      return true;
+    } catch (error) {
+      logger.error(`Error equipping shield:`, error);
+      return false;
+    }
   }
 }
 

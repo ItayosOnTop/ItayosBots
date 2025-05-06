@@ -4,6 +4,7 @@
 
 const mineflayer = require('mineflayer');
 const { pathfinder } = require('mineflayer-pathfinder');
+const armorManager = require('mineflayer-armor-manager');
 const { setupDiscord } = require('./discordIntegration');
 const { createBotByType } = require('../bot-types/botFactory');
 const { createDataStore } = require('./dataStore');
@@ -83,10 +84,14 @@ async function createBot(botConfig, globalConfig) {
   
   // Add necessary plugins
   bot.loadPlugin(pathfinder);
+  bot.loadPlugin(armorManager);
   
   // Setup event listeners
   bot.once('spawn', () => {
     logger.info(`Bot ${username} (${type}) has spawned`);
+    
+    // Auto-equip best armor on spawn
+    bot.armorManager.equipAll();
     
     // Initialize bot type specific functionality
     const botInstance = createBotByType(type, bot, globalConfig, dataStore);

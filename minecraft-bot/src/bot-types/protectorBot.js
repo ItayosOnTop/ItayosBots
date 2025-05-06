@@ -69,14 +69,7 @@ class ProtectorBot extends BaseBot {
    * @returns {boolean} - Whether the entity is hostile
    */
   isHostileMob(entity) {
-    const hostileTypes = [
-      'zombie', 'skeleton', 'spider', 'creeper', 'enderman', 
-      'witch', 'slime', 'cave_spider', 'silverfish', 'zombie_villager'
-    ];
-    
-    // Check if entity type matches any hostile type
-    return entity && entity.type === 'mob' && 
-           hostileTypes.some(type => entity.name.toLowerCase().includes(type));
+    return this.isHostileEntity(entity);
   }
   
   /**
@@ -276,20 +269,8 @@ class ProtectorBot extends BaseBot {
       // Update current task
       this.state.currentTask = `Attacking ${entity.name}`;
       
-      // Try to equip a weapon
-      const weapons = ['diamond_sword', 'iron_sword', 'stone_sword', 'wooden_sword', 'iron_axe'];
-      let equipped = false;
-      
-      for (const weapon of weapons) {
-        if (await this.equipItem(weapon, 'hand')) {
-          equipped = true;
-          break;
-        }
-      }
-      
-      if (!equipped) {
-        logger.warn(`${this.bot.username} has no weapon, attacking with hand`);
-      }
+      // Ensure we have the best weapon equipped
+      await this.equipBestWeapon();
       
       // Go to the entity
       this.bot.pathfinder.setMovements(this.movements);
@@ -356,6 +337,9 @@ class ProtectorBot extends BaseBot {
       logger.info(`${this.bot.username} retreating due to low health (${this.bot.health})`);
       
       this.state.currentTask = 'Retreating';
+      
+      // Ensure best gear is equipped before retreating
+      this.checkAndEquipBestGear();
       
       // Try to find a safe place
       const safeZones = this.globalConfig.safeZones || [];
@@ -875,8 +859,8 @@ class ProtectorBot extends BaseBot {
       // Stop any current guard activities
       this.stopGuarding();
       
-      // Equip shield if available
-      await this.equipBestShield();
+      // Make sure we have the best gear equipped
+      this.checkAndEquipBestGear();
       
       // Go to the retreat location
       await this.goToLocation(location);
@@ -887,163 +871,6 @@ class ProtectorBot extends BaseBot {
     } catch (error) {
       logger.error(`Error retreating to location:`, error);
       this.state.currentTask = null;
-      return false;
-    }
-  }
-
-  /**
-   * Equip the best shield available
-   * @returns {Promise<boolean>} - Whether a shield was equipped
-   */
-  async equipBestShield() {
-    try {
-      // Find shields in inventory
-      const shields = this.bot.inventory.items().filter(item => 
-        item.name.includes('shield')
-      );
-      
-      if (shields.length === 0) {
-        logger.debug(`${this.bot.username} has no shields in inventory`);
-        return false;
-      }
-      
-      // Equip the shield in offhand
-      await this.bot.equip(shields[0], 'off-hand');
-      logger.info(`${this.bot.username} equipped ${shields[0].name} in off-hand`);
-      return true;
-    } catch (error) {
-      logger.warn(`Error equipping shield:`, error);
-      return false;
-    }
-  }
-
-  /**
-   * Equip a specific item
-   * @param {string} itemName - Name of the item to equip
-   * @param {string} slot - Slot to equip the item in ('hand', 'off-hand', 'head', 'torso', 'legs', 'feet')
-   * @returns {Promise<boolean>} - Whether the item was equipped
-   */
-  async equipItem(itemName, slot = 'hand') {
-    try {
-      // Handle armor slots
-      const armorSlots = {
-        'head': 'helmet',
-        'torso': 'chestplate',
-        'legs': 'leggings',
-        'feet': 'boots'
-      };
-      
-      // Find items matching the name
-      const items = this.bot.inventory.items().filter(item => 
-        item.name.toLowerCase().includes(itemName.toLowerCase())
-      );
-      
-      if (items.length === 0) {
-        logger.warn(`${this.bot.username} has no ${itemName} in inventory`);
-        return false;
-      }
-      
-      // If it's armor, we need to be more specific
-      if (armorSlots[slot]) {
-        // For armor, prefer items that contain both the itemName and the slot type
-        const armorItems = items.filter(item => 
-          item.name.toLowerCase().includes(armorSlots[slot])
-        );
-        
-        if (armorItems.length > 0) {
-          await this.bot.equip(armorItems[0], slot);
-          logger.info(`${this.bot.username} equipped ${armorItems[0].name} in ${slot}`);
-          return true;
-        }
-      }
-      
-      // Otherwise just equip the first matching item
-      await this.bot.equip(items[0], slot);
-      logger.info(`${this.bot.username} equipped ${items[0].name} in ${slot}`);
-      return true;
-    } catch (error) {
-      logger.error(`Error equipping ${itemName}:`, error);
-      return false;
-    }
-  }
-
-  /**
-   * Equip best available armor
-   * @returns {Promise<boolean>} - Whether any armor was equipped
-   */
-  async equipBestArmor() {
-    try {
-      // Get all armor items in inventory
-      const armorItems = this.bot.inventory.items().filter(item => {
-        return item.name.includes('helmet') || 
-               item.name.includes('chestplate') || 
-               item.name.includes('leggings') || 
-               item.name.includes('boots');
-      });
-      
-      if (armorItems.length === 0) {
-        logger.debug(`${this.bot.username} has no armor in inventory`);
-        return false;
-      }
-      
-      // Group armor by slot
-      const helmetItems = armorItems.filter(item => item.name.includes('helmet'));
-      const chestplateItems = armorItems.filter(item => item.name.includes('chestplate'));
-      const leggingsItems = armorItems.filter(item => item.name.includes('leggings'));
-      const bootsItems = armorItems.filter(item => item.name.includes('boots'));
-      
-      // Armor quality ordering
-      const armorMaterials = ['netherite', 'diamond', 'iron', 'chainmail', 'gold', 'leather'];
-      
-      // Function to find best armor of a type
-      const findBestArmor = (items) => {
-        if (items.length === 0) return null;
-        
-        return items.sort((a, b) => {
-          const materialA = armorMaterials.findIndex(material => a.name.includes(material));
-          const materialB = armorMaterials.findIndex(material => b.name.includes(material));
-          
-          // Lower index means better material
-          return materialA - materialB;
-        })[0];
-      };
-      
-      // Find and equip best armor for each slot
-      const bestHelmet = findBestArmor(helmetItems);
-      const bestChestplate = findBestArmor(chestplateItems);
-      const bestLeggings = findBestArmor(leggingsItems);
-      const bestBoots = findBestArmor(bootsItems);
-      
-      // Equip each piece if found
-      let equipped = 0;
-      
-      if (bestHelmet) {
-        await this.bot.equip(bestHelmet, 'head');
-        equipped++;
-        logger.info(`${this.bot.username} equipped ${bestHelmet.name}`);
-      }
-      
-      if (bestChestplate) {
-        await this.bot.equip(bestChestplate, 'torso');
-        equipped++;
-        logger.info(`${this.bot.username} equipped ${bestChestplate.name}`);
-      }
-      
-      if (bestLeggings) {
-        await this.bot.equip(bestLeggings, 'legs');
-        equipped++;
-        logger.info(`${this.bot.username} equipped ${bestLeggings.name}`);
-      }
-      
-      if (bestBoots) {
-        await this.bot.equip(bestBoots, 'feet');
-        equipped++;
-        logger.info(`${this.bot.username} equipped ${bestBoots.name}`);
-      }
-      
-      return equipped > 0;
-    } catch (error) {
-      logger.error(`Error equipping best armor:`, error);
       return false;
     }
   }

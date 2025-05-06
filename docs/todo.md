@@ -161,6 +161,7 @@ This document outlines the implementation tasks for the ItayosBot Minecraft bot 
 - [X] Implement storage designation options
 - [X] Create safe zone definition system
 - [X] Add combat aggressiveness settings
+- [X] Implement auto-equipment system for all bots
 - [ ] Implement crafting priority system
 
 ### Performance Optimization (Low Priority)
