@@ -1,58 +1,45 @@
 /**
- * Bot Factory - Creates specialized bot instances based on type
+ * Bot Factory - Responsible for creating appropriate bot type instances
  */
 
+const BaseBot = require('./BaseBot');
 const { logger } = require('../utils/logger');
-const MinerBot = require('./minerBot');
-const BuilderBot = require('./builderBot');
-const ProtectorBot = require('./protectorBot');
 
 /**
- * Create a specialized bot instance based on type
- * @param {string} type - Bot type ('miner', 'builder', 'protector')
+ * Create a bot instance based on the specified type
+ * @param {string} type - Bot type ('miner', 'builder', 'protector', etc)
  * @param {Object} bot - Mineflayer bot instance
  * @param {Object} config - Global configuration
  * @param {Object} dataStore - Shared data store
- * @returns {Object} - Specialized bot instance
+ * @returns {Object} - Instance of the specific bot type
  */
 function createBotByType(type, bot, config, dataStore) {
+  // Log bot creation
   logger.info(`Creating bot of type: ${type}`);
   
-  // Get type-specific configuration
-  const typeConfig = config.botTypes[type] || {};
-  
-  // Create the appropriate bot type
+  // Currently we only have the BaseBot implementation
+  // This will be extended with actual bot types in the future
   switch (type.toLowerCase()) {
+    case 'base':
+      return new BaseBot(bot, config, dataStore);
     case 'miner':
-      return new MinerBot(bot, typeConfig, config, dataStore);
-      
+      // This would be a MinerBot class when implemented
+      logger.warn('MinerBot type not yet implemented, using BaseBot');
+      return new BaseBot(bot, config, dataStore);
     case 'builder':
-      return new BuilderBot(bot, typeConfig, config, dataStore);
-      
+      // This would be a BuilderBot class when implemented
+      logger.warn('BuilderBot type not yet implemented, using BaseBot');
+      return new BaseBot(bot, config, dataStore);
     case 'protector':
-      return new ProtectorBot(bot, typeConfig, config, dataStore);
-      
+      // This would be a ProtectorBot class when implemented
+      logger.warn('ProtectorBot type not yet implemented, using BaseBot');
+      return new BaseBot(bot, config, dataStore);
     default:
-      logger.warn(`Unknown bot type: ${type}, defaulting to base functionality`);
-      return {
-        type: 'unknown',
-        bot,
-        handleCommand(command, args) {
-          logger.warn(`Command ${command} not implemented for unknown bot type`);
-          return `Command ${command} not implemented for this bot type`;
-        },
-        getStatus() {
-          return {
-            type: 'unknown',
-            health: bot.health,
-            food: bot.food,
-            position: bot.entity.position,
-          };
-        },
-      };
+      logger.warn(`Unknown bot type: ${type}, using BaseBot as fallback`);
+      return new BaseBot(bot, config, dataStore);
   }
 }
 
 module.exports = {
-  createBotByType,
+  createBotByType
 }; 

@@ -1,773 +1,305 @@
 /**
- * Base Bot - Base class for all bot types with shared functionality
+ * BaseBot - Base class for all bot types
+ * Provides common functionality that all bots share
  */
 
-const { goals, Movements } = require('mineflayer-pathfinder');
+const AutoEat = require('mineflayer-auto-eat').plugin;
+const { goals } = require('mineflayer-pathfinder');
+const Vec3 = require('vec3');
 const { logger } = require('../utils/logger');
 
 class BaseBot {
   /**
-   * Create a new base bot instance
+   * Create a new BaseBot instance
    * @param {Object} bot - Mineflayer bot instance
-   * @param {Object} typeConfig - Type-specific configuration
-   * @param {Object} globalConfig - Global configuration
+   * @param {Object} config - Bot configuration 
    * @param {Object} dataStore - Shared data store
    */
-  constructor(bot, typeConfig, globalConfig, dataStore) {
+  constructor(bot, config, dataStore) {
     this.bot = bot;
-    this.typeConfig = typeConfig;
-    this.globalConfig = globalConfig;
+    this.config = config;
     this.dataStore = dataStore;
+    this.type = 'base';
+    this.enabled = true;
+    this.currentTask = null;
+    this.taskQueue = [];
     
-    // Bot state
-    this.state = {
-      currentTask: null,
-      lastPosition: null,
-      isStuck: false,
-      stuckTime: 0,
-      lastActivity: Date.now(),
-      isMoving: false,
-      lastArmorCheck: 0,
-    };
-    
-    // Setup pathfinding
-    this.movements = new Movements(bot);
-    this.movements.canDig = true;
-    this.movements.scafoldingBlocks = ['dirt', 'cobblestone'];
-    
-    // Setup event handlers
-    this.setupEvents();
-    
-    // Setup periodic armor check
-    this.setupArmorManager();
+    // Initialize base functionality
+    this.setupAutoEat();
+    this.setupEventHandlers();
   }
   
   /**
-   * Setup common event handlers
+   * Set up auto eat functionality
    */
-  setupEvents() {
-    // Track position to detect when bot is stuck
-    this.bot.on('physicsTick', () => {
-      const position = this.bot.entity.position;
-      
-      // Check if the bot is stuck
-      if (this.state.lastPosition && this.state.isMoving) {
-        const dx = position.x - this.state.lastPosition.x;
-        const dy = position.y - this.state.lastPosition.y;
-        const dz = position.z - this.state.lastPosition.z;
-        const distanceMoved = Math.sqrt(dx * dx + dy * dy + dz * dz);
-        
-        if (distanceMoved < 0.01) {
-          this.state.stuckTime++;
-          
-          if (this.state.stuckTime > 100) { // About 5 seconds
-            this.handleStuckState();
-          }
-        } else {
-          this.state.stuckTime = 0;
-          this.state.isStuck = false;
-        }
-      }
-      
-      this.state.lastPosition = position.clone();
-    });
+  setupAutoEat() {
+    // Load the plugin
+    this.bot.loadPlugin(AutoEat);
     
-    // Handle health changes
+    // Configure auto eat
+    this.bot.autoEat.options = {
+      priority: 'foodPoints',
+      startAt: 14,
+      bannedFood: [],
+    };
+  }
+  
+  /**
+   * Set up common event handlers
+   */
+  setupEventHandlers() {
+    // Handle health and hunger changes
     this.bot.on('health', () => {
-      // If health is low, try to eat
-      if (this.bot.food < 8) {
-        this.tryToEat();
-      }
-      
-      // If being attacked, respond
-      if (this.bot.health < 10) {
-        this.handleLowHealth();
+      if (this.bot.food < 15) {
+        this.bot.autoEat.enable();
       }
     });
     
-    // Track movement state
-    this.bot.pathfinder.setGoal(null);
-    this.bot.on('goal_reached', () => {
-      this.state.isMoving = false;
-      logger.debug(`${this.bot.username} reached goal`);
-    });
-    
-    this.bot.on('goal_updated', (goal) => {
-      this.state.isMoving = !!goal;
-    });
-    
-    // Handle errors
-    this.bot.on('error', (err) => {
-      logger.error(`Bot ${this.bot.username} error:`, err);
-    });
-  }
-  
-  /**
-   * Setup armor manager periodic checks
-   */
-  setupArmorManager() {
-    // Perform periodic armor checks
-    this.bot.on('physicsTick', () => {
-      // Check armor every 5 minutes (6000 ticks)
-      if (this.bot.time.age % 6000 === 0) {
-        this.checkAndEquipBestGear();
-      }
-    });
-    
-    // Check gear after collecting or crafting items
-    this.bot.inventory.on('updateSlot', () => {
-      // Limit checks to once every 5 seconds to avoid spam
-      const now = Date.now();
-      if (now - this.state.lastArmorCheck > 5000) {
-        this.state.lastArmorCheck = now;
-        this.checkAndEquipBestGear();
+    // Handle inventory changes to update armor
+    this.bot.on('playerCollect', (collector, collected) => {
+      if (collector.username === this.bot.username) {
+        setTimeout(() => {
+          this.equipBestArmor();
+        }, 150);
       }
     });
   }
   
   /**
-   * Check and equip the best gear available
+   * Equip the best available armor
    */
-  checkAndEquipBestGear() {
+  equipBestArmor() {
     try {
-      // Use the armor manager plugin
       this.bot.armorManager.equipAll();
-      
-      // For tools and weapons, we need custom logic
-      this.equipBestTool();
-      
-      // Check for shield in off-hand
-      this.equipBestShield();
-    } catch (error) {
-      logger.error(`Error equipping best gear:`, error);
-    }
-  }
-  
-  /**
-   * Equip the best tool for the current situation
-   */
-  equipBestTool() {
-    try {
-      // If we're in combat, equip a weapon
-      if (this.isInCombat()) {
-        this.equipBestWeapon();
-      } 
-      // Otherwise, equip appropriate tool for the current task
-      else if (this.state.currentTask && this.state.currentTask.includes('mining')) {
-        this.equipBestToolOfType(['pickaxe']);
-      } else if (this.state.currentTask && this.state.currentTask.includes('chopping')) {
-        this.equipBestToolOfType(['axe']);
-      } else if (this.state.currentTask && this.state.currentTask.includes('digging')) {
-        this.equipBestToolOfType(['shovel']);
-      }
-    } catch (error) {
-      logger.error(`Error equipping best tool:`, error);
-    }
-  }
-  
-  /**
-   * Check if the bot is currently in combat
-   * @returns {boolean} - Whether the bot is in combat
-   */
-  isInCombat() {
-    // Simple check for any hostile mob within attack range
-    for (const entity of Object.values(this.bot.entities)) {
-      if (this.isHostileEntity(entity)) {
-        const distance = entity.position.distanceTo(this.bot.entity.position);
-        if (distance < 5) {
-          return true;
-        }
-      }
-    }
-    return false;
-  }
-  
-  /**
-   * Check if an entity is hostile
-   * @param {Object} entity - Entity to check
-   * @returns {boolean} - Whether the entity is hostile
-   */
-  isHostileEntity(entity) {
-    if (!entity || !entity.name) return false;
-    
-    const hostileTypes = [
-      'zombie', 'skeleton', 'spider', 'creeper', 'enderman', 
-      'witch', 'slime', 'cave_spider', 'silverfish', 'zombie_villager',
-      'husk', 'stray', 'evoker', 'vex', 'vindicator', 'illusioner',
-      'pillager', 'ravager', 'phantom', 'drowned', 'blaze', 'ghast', 'magma_cube'
-    ];
-    
-    return entity.type === 'mob' && 
-      hostileTypes.some(type => entity.name.toLowerCase().includes(type));
-  }
-  
-  /**
-   * Equip the best weapon available
-   * @returns {Promise<boolean>} - Whether a weapon was equipped
-   */
-  async equipBestWeapon() {
-    try {
-      // Find weapons in inventory
-      const weapons = this.bot.inventory.items().filter(item => 
-        item.name.includes('sword') || item.name.includes('axe')
-      );
-      
-      if (weapons.length === 0) {
-        return false;
-      }
-      
-      // Order by material quality
-      const materialOrder = ['netherite', 'diamond', 'iron', 'stone', 'golden', 'wooden'];
-      
-      // Sort weapons by material quality
-      weapons.sort((a, b) => {
-        const getMaterialIndex = (name) => {
-          for (let i = 0; i < materialOrder.length; i++) {
-            if (name.includes(materialOrder[i])) {
-              return i;
-            }
-          }
-          return materialOrder.length; // Default to lowest priority
-        };
-        
-        return getMaterialIndex(a.name) - getMaterialIndex(b.name);
-      });
-      
-      // Equip the best weapon
-      await this.bot.equip(weapons[0], 'hand');
-      logger.info(`${this.bot.username} equipped ${weapons[0].name}`);
-      
-      return true;
-    } catch (error) {
-      logger.error(`Error equipping weapon:`, error);
-      return false;
-    }
-  }
-  
-  /**
-   * Equip the best tool of a specific type
-   * @param {Array<string>} toolTypes - Array of tool types to look for
-   * @returns {Promise<boolean>} - Whether a tool was equipped
-   */
-  async equipBestToolOfType(toolTypes) {
-    try {
-      // Find tools of the specified types
-      const tools = this.bot.inventory.items().filter(item => 
-        toolTypes.some(toolType => item.name.includes(toolType))
-      );
-      
-      if (tools.length === 0) {
-        return false;
-      }
-      
-      // Order by material quality
-      const materialOrder = ['netherite', 'diamond', 'iron', 'stone', 'golden', 'wooden'];
-      
-      // Sort tools by material quality
-      tools.sort((a, b) => {
-        const getMaterialIndex = (name) => {
-          for (let i = 0; i < materialOrder.length; i++) {
-            if (name.includes(materialOrder[i])) {
-              return i;
-            }
-          }
-          return materialOrder.length; // Default to lowest priority
-        };
-        
-        return getMaterialIndex(a.name) - getMaterialIndex(b.name);
-      });
-      
-      // Equip the best tool
-      await this.bot.equip(tools[0], 'hand');
-      logger.info(`${this.bot.username} equipped ${tools[0].name}`);
-      
-      return true;
-    } catch (error) {
-      logger.error(`Error equipping tool:`, error);
-      return false;
-    }
-  }
-  
-  /**
-   * Try to eat food to restore health and hunger
-   */
-  async tryToEat() {
-    try {
-      const foods = this.bot.inventory.items().filter(item => {
-        return this.bot.registry.isFood(item.name);
-      });
-      
-      if (foods.length === 0) {
-        logger.debug(`${this.bot.username} has no food`);
-        return false;
-      }
-      
-      // Sort by food value (if we had that data)
-      const food = foods[0];
-      
-      // Equip the food
-      await this.bot.equip(food, 'hand');
-      
-      // Consume it
-      await this.bot.consume();
-      logger.info(`${this.bot.username} ate ${food.name}`);
-      return true;
     } catch (err) {
-      logger.error(`Failed to eat:`, err);
-      return false;
+      logger.error(`Error equipping armor: ${err.message}`);
     }
-  }
-  
-  /**
-   * Handle low health situation
-   */
-  handleLowHealth() {
-    // Default implementation - retreat if health is very low
-    if (this.bot.health < 5) {
-      // Find closest safe location
-      const safeZones = this.globalConfig.safeZones || [];
-      
-      if (safeZones.length > 0) {
-        const botPos = this.bot.entity.position;
-        
-        // Find closest safe zone
-        let closestZone = null;
-        let closestDistance = Infinity;
-        
-        for (const zone of safeZones) {
-          const dx = zone.x - botPos.x;
-          const dy = zone.y - botPos.y;
-          const dz = zone.z - botPos.z;
-          const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
-          
-          if (distance < closestDistance) {
-            closestDistance = distance;
-            closestZone = zone;
-          }
-        }
-        
-        if (closestZone) {
-          logger.info(`${this.bot.username} retreating to safe zone: ${closestZone.name}`);
-          this.goToLocation(closestZone);
-        }
-      }
-    }
-  }
-  
-  /**
-   * Handle situation when bot is stuck
-   */
-  handleStuckState() {
-    // Only handle if not already handling
-    if (this.state.isStuck) return;
-    
-    this.state.isStuck = true;
-    logger.warn(`${this.bot.username} is stuck, trying to recover`);
-    
-    // Try to jump
-    this.bot.setControlState('jump', true);
-    setTimeout(() => {
-      this.bot.setControlState('jump', false);
-      
-      // Try to move in a random direction
-      const directions = ['forward', 'back', 'left', 'right'];
-      const randomDirection = directions[Math.floor(Math.random() * directions.length)];
-      
-      this.bot.setControlState(randomDirection, true);
-      setTimeout(() => {
-        this.bot.setControlState(randomDirection, false);
-        this.state.isStuck = false;
-        this.state.stuckTime = 0;
-      }, 1000);
-    }, 500);
-  }
-  
-  /**
-   * Go to a specific location
-   * @param {Object} location - Location with x, y, z coordinates
-   * @param {number} [range=1] - How close to get to the target
-   * @returns {Promise} - Resolves when location is reached or rejected on failure
-   */
-  goToLocation(location, range = 1) {
-    return new Promise((resolve, reject) => {
-      try {
-        const goal = new goals.GoalNear(location.x, location.y, location.z, range);
-        this.bot.pathfinder.setMovements(this.movements);
-        this.bot.pathfinder.setGoal(goal, true);
-        
-        // Handle success
-        const onGoalReached = () => {
-          this.bot.removeListener('goal_reached', onGoalReached);
-          this.bot.removeListener('path_update', onPathUpdate);
-          clearTimeout(timeout);
-          resolve();
-        };
-        
-        // Handle path updates
-        const onPathUpdate = (results) => {
-          if (results.status === 'noPath') {
-            this.bot.removeListener('goal_reached', onGoalReached);
-            this.bot.removeListener('path_update', onPathUpdate);
-            clearTimeout(timeout);
-            reject(new Error('No path to location'));
-          }
-        };
-        
-        // Set timeout for pathfinding
-        const timeout = setTimeout(() => {
-          this.bot.removeListener('goal_reached', onGoalReached);
-          this.bot.removeListener('path_update', onPathUpdate);
-          this.bot.pathfinder.setGoal(null);
-          reject(new Error('Timed out trying to reach location'));
-        }, this.globalConfig.advanced.pathfindingTimeout || 10000);
-        
-        // Register event listeners
-        this.bot.once('goal_reached', onGoalReached);
-        this.bot.on('path_update', onPathUpdate);
-      } catch (err) {
-        reject(err);
-      }
-    });
-  }
-  
-  /**
-   * Go to a specific player
-   * @param {string} playerName - Name of the player to go to
-   * @param {number} [range=3] - How close to get to the player
-   * @returns {Promise} - Resolves when player is reached or rejected on failure
-   */
-  goToPlayer(playerName, range = 3) {
-    return new Promise((resolve, reject) => {
-      try {
-        const player = this.bot.players[playerName];
-        
-        if (!player || !player.entity) {
-          reject(new Error(`Can't see player ${playerName}`));
-          return;
-        }
-        
-        const goal = new goals.GoalFollow(player.entity, range);
-        this.bot.pathfinder.setMovements(this.movements);
-        this.bot.pathfinder.setGoal(goal, true);
-        
-        // We don't get goal_reached with follow, so we check distance periodically
-        const checkInterval = setInterval(() => {
-          const player = this.bot.players[playerName];
-          if (!player || !player.entity) {
-            clearInterval(checkInterval);
-            clearTimeout(timeout);
-            this.bot.pathfinder.setGoal(null);
-            reject(new Error(`Lost sight of player ${playerName}`));
-            return;
-          }
-          
-          const distance = player.entity.position.distanceTo(this.bot.entity.position);
-          if (distance <= range) {
-            clearInterval(checkInterval);
-            clearTimeout(timeout);
-            this.bot.pathfinder.setGoal(null);
-            resolve();
-          }
-        }, 1000);
-        
-        // Set timeout
-        const timeout = setTimeout(() => {
-          clearInterval(checkInterval);
-          this.bot.pathfinder.setGoal(null);
-          reject(new Error('Timed out trying to reach player'));
-        }, this.globalConfig.advanced.pathfindingTimeout || 30000);
-      } catch (err) {
-        reject(err);
-      }
-    });
-  }
-  
-  /**
-   * Equip a specific item
-   * @param {string} itemName - Name of the item to equip
-   * @param {string} slot - Slot to equip the item in ('hand', 'off-hand', 'head', 'torso', 'legs', 'feet')
-   * @returns {Promise<boolean>} - Whether the item was equipped
-   */
-  async equipItem(itemName, slot = 'hand') {
-    try {
-      // Get the item from inventory
-      const item = this.bot.inventory.items().find(item => 
-        item.name.includes(itemName)
-      );
-      
-      if (!item) {
-        logger.warn(`${this.bot.username} doesn't have ${itemName} in inventory`);
-        return false;
-      }
-      
-      await this.bot.equip(item, slot);
-      logger.info(`${this.bot.username} equipped ${item.name} in ${slot}`);
-      return true;
-    } catch (error) {
-      logger.error(`Error equipping ${itemName}:`, error);
-      return false;
-    }
-  }
-  
-  /**
-   * Equip best available armor
-   * @returns {Promise<boolean>} - Whether any armor was equipped
-   */
-  async equipBestArmor() {
-    try {
-      // Get all armor items in inventory
-      const armorItems = this.bot.inventory.items().filter(item => {
-        return item.name.includes('helmet') || 
-               item.name.includes('chestplate') || 
-               item.name.includes('leggings') || 
-               item.name.includes('boots');
-      });
-      
-      if (armorItems.length === 0) {
-        logger.debug(`${this.bot.username} has no armor in inventory`);
-        return false;
-      }
-      
-      // Group armor by slot
-      const helmetItems = armorItems.filter(item => item.name.includes('helmet'));
-      const chestplateItems = armorItems.filter(item => item.name.includes('chestplate'));
-      const leggingsItems = armorItems.filter(item => item.name.includes('leggings'));
-      const bootsItems = armorItems.filter(item => item.name.includes('boots'));
-      
-      // Armor quality ordering
-      const armorMaterials = ['netherite', 'diamond', 'iron', 'chainmail', 'gold', 'leather'];
-      
-      // Function to find best armor of a type
-      const findBestArmor = (items) => {
-        if (items.length === 0) return null;
-        
-        return items.sort((a, b) => {
-          const materialA = armorMaterials.findIndex(material => a.name.includes(material));
-          const materialB = armorMaterials.findIndex(material => b.name.includes(material));
-          
-          // Lower index means better material
-          return materialA - materialB;
-        })[0];
-      };
-      
-      // Find and equip best armor for each slot
-      const bestHelmet = findBestArmor(helmetItems);
-      const bestChestplate = findBestArmor(chestplateItems);
-      const bestLeggings = findBestArmor(leggingsItems);
-      const bestBoots = findBestArmor(bootsItems);
-      
-      // Equip each piece if found
-      let equipped = 0;
-      
-      if (bestHelmet) {
-        await this.bot.equip(bestHelmet, 'head');
-        equipped++;
-        logger.info(`${this.bot.username} equipped ${bestHelmet.name}`);
-      }
-      
-      if (bestChestplate) {
-        await this.bot.equip(bestChestplate, 'torso');
-        equipped++;
-        logger.info(`${this.bot.username} equipped ${bestChestplate.name}`);
-      }
-      
-      if (bestLeggings) {
-        await this.bot.equip(bestLeggings, 'legs');
-        equipped++;
-        logger.info(`${this.bot.username} equipped ${bestLeggings.name}`);
-      }
-      
-      if (bestBoots) {
-        await this.bot.equip(bestBoots, 'feet');
-        equipped++;
-        logger.info(`${this.bot.username} equipped ${bestBoots.name}`);
-      }
-      
-      return equipped > 0;
-    } catch (error) {
-      logger.error(`Error equipping best armor:`, error);
-      return false;
-    }
-  }
-  
-  /**
-   * Drop items by name
-   * @param {string} itemName - Name of the item to drop
-   * @param {number} [count=null] - Number of items to drop, null for all
-   * @returns {Promise} - Resolves when items are dropped or rejected on failure
-   */
-  async dropItems(itemName, count = null) {
-    try {
-      const items = this.bot.inventory.items().filter(item => item.name === itemName);
-      
-      if (items.length === 0) {
-        logger.warn(`${this.bot.username} doesn't have ${itemName}`);
-        return false;
-      }
-      
-      // If count is null, drop all matching items
-      if (count === null) {
-        for (const item of items) {
-          await this.bot.tossStack(item);
-        }
-        logger.debug(`${this.bot.username} dropped all ${itemName}`);
-        return true;
-      }
-      
-      // Otherwise drop the specified count
-      let remainingCount = count;
-      
-      for (const item of items) {
-        if (remainingCount <= 0) break;
-        
-        if (item.count <= remainingCount) {
-          await this.bot.tossStack(item);
-          remainingCount -= item.count;
-        } else {
-          await this.bot.toss(item.type, null, remainingCount);
-          remainingCount = 0;
-        }
-      }
-      
-      logger.debug(`${this.bot.username} dropped ${count - remainingCount} ${itemName}`);
-      return remainingCount === 0;
-    } catch (err) {
-      logger.error(`Failed to drop ${itemName}:`, err);
-      return false;
-    }
-  }
-  
-  /**
-   * Get the current status of the bot
-   * @returns {Object} - Bot status information
-   */
-  getStatus() {
-    return {
-      username: this.bot.username,
-      type: 'base', // Override in subclasses
-      health: this.bot.health,
-      food: this.bot.food,
-      position: this.bot.entity.position,
-      currentTask: this.state.currentTask,
-      inventory: {
-        items: this.bot.inventory.items().length,
-        slots: this.bot.inventory.slots.filter(Boolean).length,
-        full: this.bot.inventory.slots.filter(Boolean).length >= this.bot.inventory.slots.length - 5,
-      },
-    };
   }
   
   /**
    * Handle a command directed at this bot
    * @param {string} command - Command name
    * @param {Array} args - Command arguments
-   * @param {string} [targetBot] - Optional target bot username
-   * @returns {*} - Command response or null if command not applicable to this bot
+   * @param {string} targetBot - Target bot name if specified
+   * @returns {string|Array|null} - Command response
    */
-  handleCommand(command, args, targetBot = null) {
-    // If a target is specified and it's not this bot, don't respond
-    if (targetBot && targetBot !== this.bot.username) {
-      return null;
+  handleCommand(command, args, targetBot) {
+    // Skip if not enabled
+    if (!this.enabled) {
+      return 'Bot is currently disabled';
     }
-
-    // Global commands that all bots should support
+    
+    // Base commands all bots should handle
     switch (command) {
-      case 'status':
-        return this.getStatus();
-        
-      case 'come':
-        if (args.length === 1) {
-          const playerName = args[0];
-          this.goToPlayer(playerName)
-            .then(() => {
-              this.bot.chat(`Reached ${playerName}`);
-            })
-            .catch((err) => {
-              this.bot.chat(`Failed to reach ${playerName}: ${err.message}`);
-            });
-          return `Going to ${playerName}`;
-        } else {
-          // Go to owner
-          this.goToPlayer(this.globalConfig.owner.minecraftUsername)
-            .then(() => {
-              this.bot.chat(`Reached ${this.globalConfig.owner.minecraftUsername}`);
-            })
-            .catch((err) => {
-              this.bot.chat(`Failed to reach you: ${err.message}`);
-            });
-          return 'Coming to you';
-        }
-        
+      case 'help':
+        return this.handleHelpCommand(args);
+      case 'stop':
+        return this.handleStopCommand();
       case 'goto':
-        if (args.length === 3) {
-          const x = parseInt(args[0]);
-          const y = parseInt(args[1]);
-          const z = parseInt(args[2]);
-          
-          if (isNaN(x) || isNaN(y) || isNaN(z)) {
-            return 'Invalid coordinates. Usage: goto <x> <y> <z>';
-          }
-          
-          const location = { x, y, z };
-          this.goToLocation(location)
-            .then(() => {
-              this.bot.chat(`Reached ${x}, ${y}, ${z}`);
-            })
-            .catch((err) => {
-              this.bot.chat(`Failed to reach location: ${err.message}`);
-            });
-          return `Going to ${x}, ${y}, ${z}`;
-        } else {
-          return 'Invalid arguments. Usage: goto <x> <y> <z>';
-        }
-        
+        return this.handleGotoCommand(args);
+      case 'come':
+        return this.handleComeCommand(args);
+      case 'status':
+        return this.handleStatusCommand();
       default:
-        // For base class, we don't know type-specific commands
-        // Return null instead of error message to avoid "unknown command" responses for valid commands of other types
-        return null;
+        return `Unknown command: ${command}`;
     }
   }
   
   /**
-   * Update the todo.md file to reflect completion of commands
-   * @param {string} command - Command that was implemented
-   * @param {string} botType - Bot type the command belongs to
+   * Handle the help command
+   * @param {Array} args - Command arguments
+   * @returns {string|Array} - Help text
    */
-  async updateCommandImplementationStatus(command, botType) {
-    // This is a stub - in a real implementation, you would
-    // update the todo.md file to mark commands as completed
-    logger.debug(`Implemented command ${command} for bot type ${botType}`);
+  handleHelpCommand(args) {
+    const commandName = args[0];
+    
+    if (!commandName) {
+      // General help
+      return [
+        'Available commands:',
+        '#help [command] - Show this help message',
+        '#list - List all active bots and their status',
+        '#stop [bot_name] - Stop all bots or a specific bot',
+        '#goto [bot_name] [x] [y] [z] - Command bot(s) to move to coordinates',
+        '#come [bot_name] - Command bot(s) to come to your location',
+        '#status [bot_name] - Get detailed status of bot(s)'
+      ];
+    }
+    
+    // Help for specific command
+    switch (commandName) {
+      case 'help':
+        return 'Usage: #help [command] - Display help information for a command';
+      case 'list':
+        return 'Usage: #list - List all active bots and their status';
+      case 'stop':
+        return 'Usage: #stop [bot_name] - Stop current activity of all bots or a specific bot';
+      case 'goto':
+        return 'Usage: #goto [bot_name] [x] [y] [z] - Command bot(s) to move to specific coordinates';
+      case 'come':
+        return 'Usage: #come [bot_name] - Command bot(s) to come to your location';
+      case 'status':
+        return 'Usage: #status [bot_name] - Display detailed status of all bots or a specific bot';
+      default:
+        return `Unknown command: ${commandName}`;
+    }
   }
   
   /**
-   * Equip the best shield available in off-hand
-   * @returns {Promise<boolean>} - Whether a shield was equipped
+   * Handle the stop command
+   * @returns {string} - Command response
    */
-  async equipBestShield() {
+  handleStopCommand() {
+    // Stop current task
+    this.stopCurrentTask();
+    return `${this.bot.username} stopped all activities`;
+  }
+  
+  /**
+   * Handle the goto command
+   * @param {Array} args - Command arguments [x, y, z]
+   * @returns {string} - Command response
+   */
+  handleGotoCommand(args) {
+    if (args.length < 3) {
+      return 'Usage: #goto [bot_name] [x] [y] [z]';
+    }
+    
+    // Parse coordinates
     try {
-      // Find shields in inventory
-      const shields = this.bot.inventory.items().filter(item => 
-        item.name.includes('shield')
-      );
+      const x = parseInt(args[0], 10);
+      const y = parseInt(args[1], 10);
+      const z = parseInt(args[2], 10);
       
-      if (shields.length === 0) {
-        return false;
+      if (isNaN(x) || isNaN(y) || isNaN(z)) {
+        return 'Invalid coordinates. Usage: #goto [bot_name] [x] [y] [z]';
       }
       
-      // Check if shield is already equipped in off-hand
-      const currentOffhand = this.bot.inventory.slots[45]; // 45 is the off-hand slot
-      if (currentOffhand && currentOffhand.name.includes('shield')) {
-        return true; // Shield already equipped
-      }
+      this.stopCurrentTask();
+      this.goToPosition(x, y, z);
       
-      // Equip the shield in off-hand
-      await this.bot.equip(shields[0], 'off-hand');
-      logger.info(`${this.bot.username} equipped ${shields[0].name} in off-hand`);
-      return true;
-    } catch (error) {
-      logger.error(`Error equipping shield:`, error);
-      return false;
+      return `${this.bot.username} is moving to coordinates [${x}, ${y}, ${z}]`;
+    } catch (err) {
+      logger.error(`Error in goto command: ${err.message}`);
+      return `Error: ${err.message}`;
     }
+  }
+  
+  /**
+   * Handle the come command
+   * @param {Array} args - Command arguments
+   * @returns {string} - Command response
+   */
+  handleComeCommand(args) {
+    // Find the player (owner) position
+    const player = this.findOwner();
+    
+    if (!player) {
+      return `${this.bot.username} cannot find the owner in the current world`;
+    }
+    
+    // Move to player position
+    this.stopCurrentTask();
+    this.goToPosition(player.position.x, player.position.y, player.position.z);
+    
+    return `${this.bot.username} is coming to your location`;
+  }
+  
+  /**
+   * Handle the status command
+   * @returns {string|Array} - Status information
+   */
+  handleStatusCommand() {
+    const position = this.bot.entity.position;
+    const health = this.bot.health;
+    const food = this.bot.food;
+    const experience = this.bot.experience;
+    
+    return [
+      `${this.bot.username} (${this.type}) Status:`,
+      `Position: [${Math.floor(position.x)}, ${Math.floor(position.y)}, ${Math.floor(position.z)}]`,
+      `Health: ${Math.floor(health)}/20`,
+      `Food: ${Math.floor(food)}/20`,
+      `XP Level: ${Math.floor(experience.level)}`,
+      `Current Task: ${this.currentTask || 'None'}`
+    ];
+  }
+  
+  /**
+   * Find the bot owner in the world
+   * @returns {Object|null} - Player object or null if not found
+   */
+  findOwner() {
+    const ownerName = this.config.owner.minecraftUsername;
+    return this.bot.players[ownerName]?.entity || null;
+  }
+  
+  /**
+   * Move to a specific position
+   * @param {number} x - X coordinate
+   * @param {number} y - Y coordinate
+   * @param {number} z - Z coordinate
+   */
+  goToPosition(x, y, z) {
+    const position = new Vec3(x, y, z);
+    this.currentTask = `Moving to [${x}, ${y}, ${z}]`;
+    
+    // Create a goal to move to the target position
+    const goal = new goals.GoalNear(position.x, position.y, position.z, 1);
+    
+    // Use pathfinder to navigate
+    this.bot.pathfinder.setGoal(goal);
+    
+    // Listen for goal reached
+    this.bot.pathfinder.once('goal_reached', () => {
+      this.currentTask = null;
+      logger.info(`${this.bot.username} reached destination [${x}, ${y}, ${z}]`);
+    });
+    
+    // Listen for goal failed
+    this.bot.pathfinder.once('path_update', (results) => {
+      if (results.status === 'noPath') {
+        this.currentTask = null;
+        logger.warn(`${this.bot.username} could not find path to [${x}, ${y}, ${z}]`);
+      }
+    });
+  }
+  
+  /**
+   * Stop the current task
+   */
+  stopCurrentTask() {
+    // Cancel pathfinding
+    if (this.bot.pathfinder.isMoving()) {
+      this.bot.pathfinder.setGoal(null);
+    }
+    
+    // Reset task state
+    this.currentTask = null;
+    this.taskQueue = [];
+    
+    // Stop any auto activities
+    this.bot.autoEat.disable();
+    
+    logger.info(`${this.bot.username} stopped all tasks`);
+  }
+  
+  /**
+   * Enable the bot
+   */
+  enable() {
+    this.enabled = true;
+    return `${this.bot.username} enabled`;
+  }
+  
+  /**
+   * Disable the bot
+   */
+  disable() {
+    this.stopCurrentTask();
+    this.enabled = false;
+    return `${this.bot.username} disabled`;
   }
 }
 

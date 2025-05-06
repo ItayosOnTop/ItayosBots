@@ -5,13 +5,14 @@
 
 const { startBotSystem } = require('./src/core/botSystem');
 const config = require('./config/config');
+const { logger } = require('./src/utils/logger');
 
 // Start the bot system with the provided configuration
 startBotSystem(config)
   .then(() => {
-    console.log('Bot system started successfully');
+    logger.info('Bot system started successfully');
   })
   .catch((error) => {
-    console.error('Failed to start bot system:', error);
+    logger.error('Failed to start bot system:', error);
     process.exit(1);
   }); 
