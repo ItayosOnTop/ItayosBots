@@ -6,6 +6,7 @@
 const { goals } = require('mineflayer-pathfinder');
 const Vec3 = require('vec3');
 const { logger } = require('../utils/logger');
+const MovementSystem = require('../core/movementSystem');
 
 class BaseBot {
   /**
@@ -22,6 +23,8 @@ class BaseBot {
     this.enabled = true;
     this.currentTask = null;
     this.taskQueue = [];
+    this.movement = new MovementSystem(bot);
+    this.isActive = false;
     
     // Initialize base functionality
     this.setupEventHandlers();
@@ -54,6 +57,26 @@ class BaseBot {
           this.equipBestArmor();
         }, 150);
       }
+    });
+
+    // Handle bot spawn
+    this.bot.on('spawn', () => {
+      console.log('Bot spawned');
+      this.isActive = true;
+    });
+
+    // Handle bot death
+    this.bot.on('death', () => {
+      console.log('Bot died');
+      this.isActive = false;
+      this.currentTask = null;
+    });
+
+    // Handle bot error
+    this.bot.on('error', (err) => {
+      console.error('Bot error:', err);
+      this.isActive = false;
+      this.currentTask = null;
     });
   }
   
@@ -216,7 +239,9 @@ class BaseBot {
       `Health: ${Math.floor(health)}/20`,
       `Food: ${Math.floor(food)}/20`,
       `XP Level: ${Math.floor(experience.level)}`,
-      `Current Task: ${this.currentTask || 'None'}`
+      `Current Task: ${this.currentTask || 'None'}`,
+      `Movement: ${this.movement.getMovementStatus()}`,
+      `Active: ${this.isActive}`
     ];
   }
   
@@ -311,6 +336,63 @@ class BaseBot {
     this.stopCurrentTask();
     this.enabled = false;
     return `${this.bot.username} disabled`;
+  }
+
+  // Basic bot commands
+  async goto(x, y, z) {
+    if (!this.isActive) return false;
+    try {
+      await this.movement.walkTo(x, y, z);
+      return true;
+    } catch (err) {
+      console.error('Error in goto command:', err);
+      return false;
+    }
+  }
+
+  async come(player) {
+    if (!this.isActive || !player) return false;
+    try {
+      const playerPos = player.position;
+      await this.movement.walkTo(
+        Math.floor(playerPos.x),
+        Math.floor(playerPos.y),
+        Math.floor(playerPos.z)
+      );
+      return true;
+    } catch (err) {
+      console.error('Error in come command:', err);
+      return false;
+    }
+  }
+
+  async stop() {
+    if (!this.isActive) return false;
+    try {
+      await this.movement.stop();
+      this.currentTask = null;
+      return true;
+    } catch (err) {
+      console.error('Error in stop command:', err);
+      return false;
+    }
+  }
+
+  // Status methods
+  getStatus() {
+    return {
+      isActive: this.isActive,
+      currentTask: this.currentTask,
+      movement: this.movement.getMovementStatus(),
+      position: this.bot.entity.position,
+      health: this.bot.health,
+      food: this.bot.food
+    };
+  }
+
+  // Abstract methods to be implemented by specific bot types
+  async start() {
+    throw new Error('start() must be implemented by bot type');
   }
 }
 

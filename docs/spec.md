@@ -1,7 +1,7 @@
 # ItayosBot - Advanced Minecraft Bot System Specification
 
 ## Overview
-ItayosBot is a sophisticated Minecraft bot system built using Mineflayer. It enables automation of various Minecraft tasks through multiple cooperative bots that can be controlled via Discord and in-game chat commands.
+ItayosBot is a sophisticated Minecraft bot system built using Mineflayer. It enables automation of various Minecraft tasks through multiple cooperative bots that can be controlled via Discord and in-game chat commands. Minecraft version: 1.21
 
 ## Core Features
 - **Multi-bot coordination**: Deploy an "army" of specialized bots that share data and work together
@@ -116,6 +116,15 @@ ItayosBot is a sophisticated Minecraft bot system built using Mineflayer. It ena
 - Water and lava navigation
 - Path memorization for frequent routes
 - Efficient multi-destination routing
+
+### Movement System
+- Basic movement (walking, running, jumping)
+- Advanced navigation (A* pathfinding, obstacle avoidance)
+- Movement states (idle, following, patrolling, combat)
+- Special movement features (flying, teleportation, vehicle usage)
+- Movement optimization (path caching, prediction, energy management)
+- Safety features (fall prevention, hazard avoidance)
+- Integration with Mineflayer movement API
 
 ### Combat Tactics
 - Weapon switching based on enemy type
