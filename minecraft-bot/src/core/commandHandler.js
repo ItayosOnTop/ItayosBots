@@ -37,18 +37,47 @@ function setupCommandHandler(bot, botInstance, prefix, owner) {
         isOwner,
       };
       
-      const response = handleCommand(message, 'minecraft', sender, botInstance);
+      // Extract command and arguments
+      const parts = message.trim().split(' ');
+      const commandName = parts[0].substring(prefix.length); // Remove the prefix
+      const args = parts.slice(1);
       
-      // Send response if there is one
-      if (response) {
-        if (typeof response === 'string') {
-          bot.chat(response);
-        } else if (Array.isArray(response)) {
-          for (const line of response) {
-            bot.chat(line);
+      // Check if this command is for this specific bot
+      if (args.length > 0 && args[0] === bot.username) {
+        // Command is specifically for this bot
+        const botArgs = args.slice(1); // Remove bot name from args
+        const response = botInstance.handleCommand(commandName, botArgs);
+        
+        // Send response if there is one
+        if (response) {
+          if (typeof response === 'string') {
+            bot.chat(response);
+          } else if (Array.isArray(response)) {
+            for (const line of response) {
+              bot.chat(line);
+            }
+          } else if (typeof response === 'object') {
+            bot.chat(JSON.stringify(response));
           }
-        } else if (typeof response === 'object') {
-          bot.chat(JSON.stringify(response));
+        }
+      } else if (args.length > 0 && args[0] !== bot.username) {
+        // Command is for another bot, ignore
+        return;
+      } else {
+        // Global command or no target specified
+        const response = handleCommand(message, 'minecraft', sender, botInstance);
+        
+        // Send response if there is one
+        if (response) {
+          if (typeof response === 'string') {
+            bot.chat(response);
+          } else if (Array.isArray(response)) {
+            for (const line of response) {
+              bot.chat(line);
+            }
+          } else if (typeof response === 'object') {
+            bot.chat(JSON.stringify(response));
+          }
         }
       }
     } catch (err) {
@@ -77,13 +106,6 @@ function handleCommand(message, source, sender, botInstance = null) {
   const subCommand = commandParts.length > 1 ? commandParts[1] : null;
   
   let args = parts.slice(1);
-  
-  // Check if this is a targeted command for a specific bot
-  let targetBot = null;
-  if (args.length > 0 && botInstance && args[0] !== botInstance.bot.username) {
-    // Check if the first argument could be a bot name
-    targetBot = args[0];
-  }
   
   // Check if it's a registered global command
   if (commands.has(commandName)) {

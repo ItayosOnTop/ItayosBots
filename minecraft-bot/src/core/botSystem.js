@@ -80,6 +80,10 @@ async function createBot(botConfig, globalConfig) {
     password,
     version: globalConfig.server.version,
     viewDistance: globalConfig.bots.defaults.viewDistance,
+    checkTimeoutInterval: 60000, // 60 seconds timeout check
+    physicEnabled: true,
+    keepAlive: true,
+    chatLengthLimit: 100 // Prevents too long messages
   });
   
   // Add necessary plugins
@@ -90,45 +94,105 @@ async function createBot(botConfig, globalConfig) {
   bot.once('spawn', () => {
     logger.info(`Bot ${username} (${type}) has spawned`);
     
-    // Configure pathfinder with default movements
-    const mcData = require('minecraft-data')(bot.version);
-    const movements = new Movements(bot, mcData);
-    movements.canDig = true;
-    movements.allowSprinting = true;
-    movements.scafoldingBlocks = ['dirt', 'cobblestone', 'stone'];
-    
-    bot.pathfinder.setMovements(movements);
-    
-    // Auto-equip best armor on spawn
-    bot.armorManager.equipAll();
-    
-    // Initialize bot type specific functionality
-    const botInstance = createBotByType(type, bot, globalConfig, dataStore);
-    
-    // Setup command handler
-    setupCommandHandler(bot, botInstance, globalConfig.system.commandPrefix, globalConfig.owner);
-    
-    // Save bot instance to active bots map
-    activeBots.set(username, {
-      bot,
-      instance: botInstance,
-      config: botConfig
-    });
+    try {
+      // Configure pathfinder with default movements
+      const mcData = require('minecraft-data')(bot.version);
+      const movements = new Movements(bot, mcData);
+      movements.canDig = true;
+      movements.allowSprinting = true;
+      movements.scafoldingBlocks = ['dirt', 'cobblestone', 'stone'];
+      movements.allowParkour = true;
+      movements.canOpenDoors = true;
+      
+      bot.pathfinder.setMovements(movements);
+      
+      // Auto-equip best armor on spawn
+      bot.armorManager.equipAll();
+      
+      // Initialize bot type specific functionality
+      const botInstance = createBotByType(type, bot, globalConfig, dataStore);
+      
+      // Setup command handler
+      setupCommandHandler(bot, botInstance, globalConfig.system.commandPrefix, globalConfig.owner);
+      
+      // Save bot instance to active bots map
+      activeBots.set(username, {
+        bot,
+        instance: botInstance,
+        config: botConfig
+      });
+    } catch (err) {
+      logger.error(`Error initializing bot ${username}:`, err);
+    }
   });
   
+  // Handle errors
   bot.on('error', (err) => {
     logger.error(`Bot ${username} encountered an error:`, err);
   });
   
-  bot.on('end', () => {
-    logger.warn(`Bot ${username} disconnected, attempting to reconnect...`);
-    setTimeout(() => {
-      // Attempt to reconnect
-      activeBots.delete(username);
-      createBot(botConfig, globalConfig).catch(err => {
-        logger.error(`Failed to reconnect bot ${username}:`, err);
-      });
-    }, 5000);
+  bot.on('kicked', (reason, loggedIn) => {
+    logger.warn(`Bot ${username} was kicked. Reason: ${reason}. Logged in: ${loggedIn}`);
+  });
+  
+  bot.on('end', (reason) => {
+    logger.warn(`Bot ${username} disconnected (${reason}), attempting to reconnect...`);
+    
+    // Remove from active bots first
+    activeBots.delete(username);
+    
+    // Attempt to reconnect with an increasing delay
+    const reconnect = (attempt = 1) => {
+      const delay = Math.min(30000, attempt * 5000); // Increase delay up to 30 seconds
+      
+      logger.info(`Will attempt to reconnect ${username} in ${delay/1000} seconds (attempt ${attempt})`);
+      
+      setTimeout(() => {
+        // Check if the bot is already reconnected (by another process)
+        if (activeBots.has(username)) {
+          logger.info(`Bot ${username} is already reconnected`);
+          return;
+        }
+        
+        logger.info(`Attempting to reconnect ${username} (attempt ${attempt})`);
+        
+        createBot(botConfig, globalConfig).then(() => {
+          logger.info(`Successfully reconnected bot ${username}`);
+        }).catch(err => {
+          logger.error(`Failed to reconnect bot ${username}:`, err);
+          
+          // Try again with increased attempt count
+          if (attempt < 10) { // Maximum 10 attempts
+            reconnect(attempt + 1);
+          } else {
+            logger.error(`Giving up on reconnecting bot ${username} after ${attempt} attempts`);
+          }
+        });
+      }, delay);
+    };
+    
+    // Start reconnection attempts
+    reconnect();
+  });
+  
+  // Handle game-related events
+  bot.on('death', () => {
+    logger.warn(`Bot ${username} died, will respawn automatically`);
+  });
+  
+  bot.on('health', () => {
+    if (bot.health < 5) {
+      logger.warn(`Bot ${username} is low on health: ${bot.health.toFixed(1)}`);
+    }
+  });
+  
+  bot.on('respawn', () => {
+    logger.info(`Bot ${username} respawned`);
+    
+    // Reequip armor after respawn
+    if (bot.armorManager) {
+      bot.armorManager.equipAll();
+    }
   });
   
   // Return a promise that resolves when the bot has spawned
@@ -139,9 +203,16 @@ async function createBot(botConfig, globalConfig) {
     const timeout = setTimeout(() => {
       bot.removeListener('spawn', resolve);
       reject(new Error(`Timed out while connecting bot ${username}`));
-    }, 30000);
+    }, 60000); // Increase timeout to 60 seconds
     
     bot.once('spawn', () => clearTimeout(timeout));
+    
+    // Also reject on connection error
+    bot.once('error', (err) => {
+      clearTimeout(timeout);
+      bot.removeListener('spawn', resolve);
+      reject(err);
+    });
   });
 }
 
