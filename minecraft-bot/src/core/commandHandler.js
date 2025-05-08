@@ -8,6 +8,38 @@ const { logger } = require('../utils/logger');
 const commands = new Map();
 
 /**
+ * Format a response for chat output
+ * @param {*} response - The response to format
+ * @returns {string[]} - Array of formatted message lines
+ */
+function formatResponse(response) {
+  if (response === null || response === undefined) {
+    return [];
+  }
+  
+  if (typeof response === 'string') {
+    return [response];
+  }
+  
+  if (Array.isArray(response)) {
+    return response.map(item => 
+      typeof item === 'string' ? item : JSON.stringify(item)
+    );
+  }
+  
+  if (typeof response === 'object') {
+    try {
+      return [JSON.stringify(response)];
+    } catch (err) {
+      logger.error('Error converting object to string:', err);
+      return ['[Complex object, cannot display]'];
+    }
+  }
+  
+  return [String(response)];
+}
+
+/**
  * Setup command handling for a bot
  * @param {Object} bot - Mineflayer bot instance
  * @param {Object} botInstance - Bot type implementation instance
@@ -50,14 +82,9 @@ function setupCommandHandler(bot, botInstance, prefix, owner) {
         
         // Send response if there is one
         if (response) {
-          if (typeof response === 'string') {
-            bot.chat(response);
-          } else if (Array.isArray(response)) {
-            for (const line of response) {
-              bot.chat(line);
-            }
-          } else if (typeof response === 'object') {
-            bot.chat(JSON.stringify(response));
+          const messages = formatResponse(response);
+          for (const line of messages) {
+            bot.chat(line);
           }
         }
       } else if (args.length > 0 && args[0] !== bot.username) {
@@ -69,14 +96,9 @@ function setupCommandHandler(bot, botInstance, prefix, owner) {
         
         // Send response if there is one
         if (response) {
-          if (typeof response === 'string') {
-            bot.chat(response);
-          } else if (Array.isArray(response)) {
-            for (const line of response) {
-              bot.chat(line);
-            }
-          } else if (typeof response === 'object') {
-            bot.chat(JSON.stringify(response));
+          const messages = formatResponse(response);
+          for (const line of messages) {
+            bot.chat(line);
           }
         }
       }

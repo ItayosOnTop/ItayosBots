@@ -227,12 +227,12 @@ class ProtectorBot extends BaseBot {
 
     getTypeSpecificHelp() {
         return [
-            `\`${this.config.system.commandPrefix}guard [player]\` - Guard a specific player`,
-            `\`${this.config.system.commandPrefix}patrol [radius]\` - Patrol area around bot`,
-            `\`${this.config.system.commandPrefix}attack [target]\` - Attack specified target`,
-            `\`${this.config.system.commandPrefix}defend [radius]\` - Defend area around bot`,
-            `\`${this.config.system.commandPrefix}equip [item]\` - Equip specified item`,
-            `\`${this.config.system.commandPrefix}heal [target]\` - Heal specified target`
+            `${this.config.system.commandPrefix}guard [player] - Guard a specific player`,
+            `${this.config.system.commandPrefix}patrol [radius] - Patrol area around bot`,
+            `${this.config.system.commandPrefix}attack [target] - Attack specified target`,
+            `${this.config.system.commandPrefix}defend [radius] - Defend area around bot`,
+            `${this.config.system.commandPrefix}equip [item] - Equip specified item`,
+            `${this.config.system.commandPrefix}heal [target] - Heal specified target`
         ];
     }
     

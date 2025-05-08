@@ -212,12 +212,12 @@ class MinerBot extends BaseBot {
   
   getTypeSpecificHelp() {
     return [
-      `\`${this.config.system.commandPrefix}mine [block_type] [count]\` - Mine specific blocks`,
-      `\`${this.config.system.commandPrefix}collect [item_type] [count]\` - Collect specific items`,
-      `\`${this.config.system.commandPrefix}store [item] [chest_name]\` - Store items in chest`,
-      `\`${this.config.system.commandPrefix}craft [item] [count]\` - Craft specific items`,
-      `\`${this.config.system.commandPrefix}findore [ore_type]\` - Locate nearest ore`,
-      `\`${this.config.system.commandPrefix}minearea [x1] [y1] [z1] [x2] [y2] [z2]\` - Mine area`
+      `${this.config.system.commandPrefix}mine [block_type] [count] - Mine specific blocks`,
+      `${this.config.system.commandPrefix}collect [item_type] [count] - Collect specific items`,
+      `${this.config.system.commandPrefix}store [item] [chest_name] - Store items in chest`,
+      `${this.config.system.commandPrefix}craft [item] [count] - Craft specific items`,
+      `${this.config.system.commandPrefix}findore [ore_type] - Locate nearest ore`,
+      `${this.config.system.commandPrefix}minearea [x1] [y1] [z1] [x2] [y2] [z2] - Mine area`
     ];
   }
   

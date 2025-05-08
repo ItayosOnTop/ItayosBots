@@ -186,13 +186,13 @@ class BuilderBot extends BaseBot {
   
   getTypeSpecificHelp() {
     return [
-      `\`${this.config.system.commandPrefix}build [schematic]\` - Build a structure from schematic`,
-      `\`${this.config.system.commandPrefix}clear [radius]\` - Clear area around bot`,
-      `\`${this.config.system.commandPrefix}fill [block] [radius]\` - Fill area with blocks`,
-      `\`${this.config.system.commandPrefix}copy [radius]\` - Copy area to clipboard`,
-      `\`${this.config.system.commandPrefix}paste\` - Paste clipboard contents`,
-      `\`${this.config.system.commandPrefix}undo\` - Undo last build operation`,
-      `\`${this.config.system.commandPrefix}redo\` - Redo last undone operation`
+      `${this.config.system.commandPrefix}build [schematic] - Build a structure from schematic`,
+      `${this.config.system.commandPrefix}clear [radius] - Clear area around bot`,
+      `${this.config.system.commandPrefix}fill [block] [radius] - Fill area with blocks`,
+      `${this.config.system.commandPrefix}copy [radius] - Copy area to clipboard`,
+      `${this.config.system.commandPrefix}paste - Paste clipboard contents`,
+      `${this.config.system.commandPrefix}undo - Undo last build operation`,
+      `${this.config.system.commandPrefix}redo - Redo last undone operation`
     ];
   }
   

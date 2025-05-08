@@ -133,34 +133,34 @@ class BaseBot {
     const prefix = this.config.system.commandPrefix || '#';
     
     if (!commandName) {
-      // Bot-specific help
+      // Bot-specific help - Return as array of simple strings
       return [
-        `**${this.bot.username} (${this.type}) Commands:**`,
-        '',
-        '**Global Commands:**',
-        `\`${prefix}help [command]\` - Show this help message`,
-        `\`${prefix}status\` - Get detailed status`,
-        `\`${prefix}goto [x] [y] [z]\` - Move to coordinates`,
-        `\`${prefix}come\` - Come to your location`,
-        '',
-        '**Type-Specific Commands:**',
-        this.getTypeSpecificHelp(),
-        '',
-        `Use \`${prefix}help [command]\` for details on a specific command.`
+        `${this.bot.username} (${this.type}) Commands:`,
+        `Global Commands:`,
+        `${prefix}help [command] - Show help message`,
+        `${prefix}status - Get detailed status`,
+        `${prefix}goto [x] [y] [z] - Move to coordinates`,
+        `${prefix}come - Come to your location`,
+        `Type-Specific Commands:`,
+        ...this.getTypeSpecificHelp().map(line => line.replace(/\`/g, '').replace(/\*\*/g, '')),
+        `Use ${prefix}help [command] for details on a specific command.`
       ];
     }
     
     // Help for specific command
     const helpTexts = {
       // Global commands
-      'help': `Usage: ${prefix}help [command]\nDisplay help information for a command`,
-      'status': `Usage: ${prefix}status\nDisplay detailed status of this bot`,
-      'goto': `Usage: ${prefix}goto [x] [y] [z]\nMove to specific coordinates`,
-      'come': `Usage: ${prefix}come\nCome to your location`,
+      'help': `Usage: ${prefix}help [command] - Display help information for a command`,
+      'status': `Usage: ${prefix}status - Display detailed status of this bot`,
+      'goto': `Usage: ${prefix}goto [x] [y] [z] - Move to specific coordinates`,
+      'come': `Usage: ${prefix}come - Come to your location`,
     };
     
     // Add type-specific command help
-    Object.assign(helpTexts, this.getTypeSpecificCommandHelp());
+    const typeSpecificHelp = this.getTypeSpecificCommandHelp();
+    for (const [cmd, helpText] of Object.entries(typeSpecificHelp)) {
+      helpTexts[cmd] = helpText.replace(/\`/g, '').replace(/\*\*/g, '').replace(/\n/g, ' - ');
+    }
     
     return helpTexts[commandName] || `Unknown command: ${commandName}`;
   }
@@ -263,20 +263,20 @@ class BaseBot {
     });
     
     return [
-      `**${this.bot.username} (${this.type}) Status:**`,
-      `**Position:** [${Math.floor(position.x)}, ${Math.floor(position.y)}, ${Math.floor(position.z)}]`,
-      `**Health:** ${Math.floor(health)}/20`,
-      `**Food:** ${Math.floor(food)}/20`,
-      `**XP Level:** ${Math.floor(experience.level)}`,
-      `**Current Task:** ${this.currentTask || 'Idle'}`,
-      `**Movement:** ${this.movement.getMovementStatus()}`,
-      `**Equipped:**`,
-      `- Helmet: ${equipment.head}`,
-      `- Chestplate: ${equipment.torso}`,
-      `- Leggings: ${equipment.legs}`,
-      `- Boots: ${equipment.feet}`,
-      `- Hand: ${equipment.hand}`,
-      `**Inventory:** ${inventoryText}`
+      `${this.bot.username} (${this.type}) Status:`,
+      `Position: [${Math.floor(position.x)}, ${Math.floor(position.y)}, ${Math.floor(position.z)}]`,
+      `Health: ${Math.floor(health)}/20`,
+      `Food: ${Math.floor(food)}/20`,
+      `XP Level: ${Math.floor(experience.level)}`,
+      `Current Task: ${this.currentTask || 'Idle'}`,
+      `Movement: ${this.movement.getMovementStatus().state}`,
+      `Equipped:`,
+      `Helmet: ${equipment.head}`,
+      `Chestplate: ${equipment.torso}`,
+      `Leggings: ${equipment.legs}`,
+      `Boots: ${equipment.feet}`,
+      `Hand: ${equipment.hand}`,
+      `Inventory: ${inventoryText}`
     ];
   }
   
