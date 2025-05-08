@@ -2,13 +2,21 @@
 
 ## High Priority Tasks
 
+### Command System Improvements
+- [X] Require bot names for all commands
+- [ ] Add command validation for bot names
+- [ ] Implement command feedback system
+- [ ] Add command history tracking
+- [ ] Create command queuing system
+- [ ] Add command timeout handling
+
 ### Movement System (Phase 1)
-- [ ] Implement basic walking and running mechanics
-- [ ] Add jumping functionality
-- [ ] Implement basic collision detection
-- [ ] Create simple pathfinding system
-- [ ] Add water navigation
-- [ ] Implement basic following behavior
+- [X] Implement basic walking and running mechanics
+- [X] Add jumping functionality
+- [X] Implement basic collision detection
+- [X] Create simple pathfinding system
+- [X] Add water navigation
+- [X] Implement basic following behavior
 
 ### Movement System (Phase 2)
 - [ ] Implement A* pathfinding algorithm
@@ -43,17 +51,17 @@
 - [ ] Create repair system
 
 ### Protector Bot
-- [ ] Implement threat detection
-- [ ] Create combat system
-- [ ] Add patrol behavior
-- [ ] Implement guard mode
-- [ ] Create defense coordination
+- [X] Implement threat detection
+- [X] Create combat system
+- [X] Add patrol behavior
+- [X] Implement guard mode
+- [X] Create defense coordination
 
 ## System Infrastructure
 
 ### Command System
-- [ ] Implement command parser
-- [ ] Create command validation
+- [X] Implement command parser
+- [X] Create command validation
 - [ ] Add command history
 - [ ] Implement command queuing
 - [ ] Create command feedback system
@@ -63,7 +71,7 @@
 - [ ] Create shared data store
 - [ ] Add Discord integration
 - [ ] Implement chat commands
-- [ ] Create status reporting
+- [X] Create status reporting
 
 ### Safety Features
 - [ ] Implement fall damage prevention

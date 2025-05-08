@@ -171,80 +171,37 @@ function handleCommand(command, source, sender, configObj) {
   const cmd = parts[0].substring(prefix.length);
   const args = parts.slice(1);
   
+  // All commands now require a bot name
+  if (args.length === 0) {
+    return `Please specify a bot name. Usage: ${prefix}${cmd} <bot_name> [additional_args]`;
+  }
+  
+  const targetBot = args[0];
+  if (!activeBots.has(targetBot)) {
+    return `Bot ${targetBot} not found. Available bots: ${Array.from(activeBots.keys()).join(', ')}`;
+  }
+  
+  const { instance } = activeBots.get(targetBot);
+  
   // Handle system-wide commands
   if (cmd === 'help') {
-    return getHelpText(args[0], cfg);
+    // Pass the remaining args to the bot's help command
+    return instance.handleCommand('help', args.slice(1));
   }
   else if (cmd === 'list') {
-    // Check if list targets a specific bot
-    return args.length > 0 ? listBots(args[0]) : listBots();
+    return listBots(targetBot);
   }
   else if (cmd === 'stop') {
-    return args.length > 0 ? stopBot(args[0]) : stopAllBots();
+    return stopBot(targetBot);
   }
   else if (cmd === 'status' || cmd === 'goto' || cmd === 'come') {
-    // These are global commands that may target specific bots
-    
-    // Check if a target bot is specified
-    const targetBot = args.length > 0 ? args[0] : null;
-    
-    if (targetBot && activeBots.has(targetBot)) {
-      // Command targeted at a specific bot
-      const { instance } = activeBots.get(targetBot);
-      const response = instance.handleCommand(cmd, args.slice(1), targetBot);
-      
-      // Return the response or a fallback message
-      return response || `Command ${cmd} sent to ${targetBot}`;
-    } else {
-      // Send to all bots, collect responses
-      const responses = [];
-      
-      for (const [botName, { instance }] of activeBots) {
-        const response = instance.handleCommand(cmd, args, null);
-        if (response) {
-          responses.push(`${botName}: ${response}`);
-        }
-      }
-      
-      return responses.length > 0 ? responses.join('\n') : 'No bot responses received';
-    }
+    const response = instance.handleCommand(cmd, args.slice(1));
+    return response || `Command ${prefix}${cmd} sent to ${targetBot}`;
   }
   
   // For bot-specific commands (mine, guard, buildwall, etc.)
-  const responses = [];
-  let validCommand = false;
-  
-  // Try sending to all bots - only the one that recognizes the command will respond
-  for (const [botName, { instance }] of activeBots) {
-    // If a target bot is specified, only send to that bot
-    if (args.length > 0 && args[0] === botName) {
-      const response = instance.handleCommand(cmd, args.slice(1), botName);
-      if (response) {
-        return `${botName}: ${response}`;
-      }
-      return `Command ${cmd} sent to ${botName}`;
-    }
-    
-    // If no target specified, send to all bots
-    if (args.length === 0 || !activeBots.has(args[0])) {
-      const response = instance.handleCommand(cmd, args, null);
-      if (response) {
-        validCommand = true;
-        responses.push(`${botName}: ${response}`);
-      }
-    }
-  }
-  
-  if (responses.length > 0) {
-    return responses.join('\n');
-  }
-  
-  // If we reached here, no bot recognized the command
-  if (!validCommand) {
-    return `Unknown command: ${cmd}. Type ${prefix}help for assistance.`;
-  }
-  
-  return null;
+  const response = instance.handleCommand(cmd, args.slice(1));
+  return response || `Command ${prefix}${cmd} sent to ${targetBot}`;
 }
 
 /**
@@ -261,19 +218,19 @@ function getHelpText(command, config) {
     '**ItayosBot Command Help**',
     '',
     '**Global Commands:**',
-    `\`${prefix}help [command]\` - Show this help message`,
-    `\`${prefix}list\` - List all active bots and their status`,
-    `\`${prefix}stop [bot_name]\` - Stop all bots or a specific bot`,
-    `\`${prefix}goto [bot_name] [x] [y] [z]\` - Command bot(s) to move to coordinates`,
-    `\`${prefix}come [bot_name]\` - Command bot(s) to come to your location`,
-    `\`${prefix}status [bot_name]\` - Get detailed status of bot(s)`,
+    `\`${prefix}help <bot_name> [command]\` - Show help for specific bot`,
+    `\`${prefix}list <bot_name>\` - Show status of specific bot`,
+    `\`${prefix}stop <bot_name>\` - Stop specific bot`,
+    `\`${prefix}goto <bot_name> [x] [y] [z]\` - Command bot to move to coordinates`,
+    `\`${prefix}come <bot_name>\` - Command bot to come to your location`,
+    `\`${prefix}status <bot_name>\` - Get detailed status of bot`,
     '',
-    '**Bot Type-Specific Commands:**',
-    `For Miner bot: mine, store, minearea`,
-    `For Builder bot: buildwall, blueprint`,
-    `For Protector bot: guard, patrol`,
+    '**Bot Types:**',
+    `- **Miner Bot**: Resource gathering and processing`,
+    `- **Builder Bot**: Construction and building`,
+    `- **Protector Bot**: Security and combat`,
     '',
-    `Use \`${prefix}help [command]\` for details on a specific command.`
+    `Use \`${prefix}help <bot_name>\` to see commands available for a specific bot.`
   ].join('\n');
 
   // If no specific command, return general help
@@ -281,28 +238,21 @@ function getHelpText(command, config) {
     return generalHelp;
   }
 
+  // If the command is a bot name, try to get help from that bot
+  if (activeBots.has(command)) {
+    const { instance } = activeBots.get(command);
+    return instance.handleCommand('help', []);
+  }
+
   // Help text for specific commands
   const helpTexts = {
     // Global commands
-    'help': `Usage: ${prefix}help [command]\nShow help information for commands.`,
-    'list': `Usage: ${prefix}list\nList all active bots and their status.`,
-    'stop': `Usage: ${prefix}stop [bot_name]\nStop all bots or a specific bot.`,
-    'goto': `Usage: ${prefix}goto [bot_name] [x] [y] [z]\nCommand bot(s) to move to specific coordinates.`,
-    'come': `Usage: ${prefix}come [bot_name]\nCommand bot(s) to come to your location.`,
-    'status': `Usage: ${prefix}status [bot_name]\nGet detailed status of bot(s).`,
-    
-    // Miner commands
-    'mine': `Usage: ${prefix}mine [block_type] [count]\nMine specific blocks until count reached.`,
-    'store': `Usage: ${prefix}store\nStore items in a storage chest.`,
-    'minearea': `Usage: ${prefix}minearea <x1> <y1> <z1> <x2> <y2> <z2>\nMine all blocks in an area.`,
-    
-    // Builder commands
-    'buildwall': `Usage: ${prefix}buildwall [block_type] [height] [x1] [z1] [x2] [z2]\nBuild wall between points.`,
-    'blueprint': `Usage: ${prefix}blueprint [name] [x1] [y1] [z1] [x2] [y2] [z2]\nCreate new schematic from area.`,
-    
-    // Protector commands
-    'guard': `Usage: ${prefix}guard [x] [y] [z] or [player_name]\nGuard location or player.`,
-    'patrol': `Usage: ${prefix}patrol [x1] [z1] [x2] [z2]\nPatrol rectangular area.`,
+    'help': `Usage: ${prefix}help <bot_name> [command]\nShow help information for specific bot.`,
+    'list': `Usage: ${prefix}list <bot_name>\nShow status of specific bot.`,
+    'stop': `Usage: ${prefix}stop <bot_name>\nStop specific bot.`,
+    'goto': `Usage: ${prefix}goto <bot_name> [x] [y] [z]\nCommand bot to move to specific coordinates.`,
+    'come': `Usage: ${prefix}come <bot_name>\nCommand bot to come to your location.`,
+    'status': `Usage: ${prefix}status <bot_name>\nGet detailed status of bot.`,
   };
 
   return helpTexts[command] || `No help available for command: ${command}`;

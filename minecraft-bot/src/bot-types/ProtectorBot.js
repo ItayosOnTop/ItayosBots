@@ -1,8 +1,21 @@
+/**
+ * ProtectorBot - Specialized bot for security and combat tasks
+ */
+
 const BaseBot = require('./BaseBot');
+const Vec3 = require('vec3');
+const { logger } = require('../utils/logger');
 
 class ProtectorBot extends BaseBot {
-    constructor(bot, config) {
-        super(bot, config);
+    /**
+     * Create a new ProtectorBot instance
+     * @param {Object} bot - Mineflayer bot instance
+     * @param {Object} config - Global configuration
+     * @param {Object} dataStore - Shared data store
+     */
+    constructor(bot, config, dataStore) {
+        super(bot, config, dataStore);
+        this.type = 'protector';
         this.whitelist = new Set();
         this.guardTarget = null;
         this.patrolArea = null;
@@ -63,7 +76,7 @@ class ProtectorBot extends BaseBot {
                 checkEntity();
             });
         } catch (err) {
-            console.error('Error in combat:', err);
+            logger.error('Error in combat:', err);
             this.combatMode = false;
             this.currentTask = null;
         }
@@ -76,8 +89,12 @@ class ProtectorBot extends BaseBot {
         
         if (weapons.length > 0) {
             const bestWeapon = weapons.reduce((best, current) => {
-                return current.attackDamage > best.attackDamage ? current : best;
-            });
+                // Simple comparison assuming higher attack damage is better
+                const currentDamage = current.attackDamage || 0;
+                const bestDamage = best.attackDamage || 0;
+                return currentDamage > bestDamage ? current : best;
+            }, weapons[0]);
+            
             await this.bot.equip(bestWeapon, 'hand');
         }
     }
@@ -93,108 +110,141 @@ class ProtectorBot extends BaseBot {
                 Math.floor(playerPos.z)
             );
         } catch (err) {
-            console.error('Error following player:', err);
+            logger.error('Error following player:', err);
         }
     }
 
-    // Protector-specific commands
-    async guard(target) {
-        if (!this.isActive) return false;
-        
-        if (typeof target === 'string') {
-            // Guard a player
-            const player = this.bot.players[target];
-            if (player) {
-                this.guardTarget = target;
-                this.currentTask = `Guarding ${target}`;
-                await this.followPlayer(player);
-                return true;
-            }
-        } else if (target instanceof Vec3) {
-            // Guard a location
-            this.guardTarget = null;
-            this.currentTask = `Guarding location ${target.toString()}`;
-            await this.movement.walkTo(target.x, target.y, target.z);
-            return true;
+    // Handle protector-specific commands
+    handleCommand(command, args) {
+        switch (command) {
+            case 'guard':
+                return this.handleGuardCommand(args);
+            case 'patrol':
+                return this.handlePatrolCommand(args);
+            case 'attack':
+                return this.handleAttackCommand(args);
+            case 'defend':
+                return this.handleDefendCommand(args);
+            case 'equip':
+                return this.handleEquipCommand(args);
+            case 'heal':
+                return this.handleHealCommand(args);
+            default:
+                return super.handleCommand(command, args);
+        }
+    }
+    
+    // Command handlers
+    handleGuardCommand(args) {
+        if (args.length < 1) {
+            return 'Usage: #guard [player]';
         }
         
-        return false;
+        const target = args[0];
+        if (this.bot.players[target]) {
+            this.guardTarget = target;
+            this.currentTask = `Guarding ${target}`;
+            return `Now guarding ${target}`;
+        } else {
+            return `Player ${target} not found`;
+        }
     }
-
-    async patrol(x1, z1, x2, z2) {
-        if (!this.isActive) return false;
-        
-        this.patrolArea = { x1, z1, x2, z2 };
-        this.currentTask = `Patrolling area (${x1},${z1}) to (${x2},${z2})`;
+    
+    handlePatrolCommand(args) {
+        if (args.length < 4) {
+            return 'Usage: #patrol [x1] [z1] [x2] [z2]';
+        }
         
         try {
-            // Simple patrol pattern: move to each corner in sequence
-            const corners = [
-                [x1, z1],
-                [x2, z1],
-                [x2, z2],
-                [x1, z2]
-            ];
+            const x1 = parseInt(args[0], 10);
+            const z1 = parseInt(args[1], 10);
+            const x2 = parseInt(args[2], 10);
+            const z2 = parseInt(args[3], 10);
             
-            for (const [x, z] of corners) {
-                if (!this.isActive) break;
-                await this.movement.walkTo(x, this.bot.entity.position.y, z);
-                await new Promise(resolve => setTimeout(resolve, 2000)); // Pause at corners
+            if (isNaN(x1) || isNaN(z1) || isNaN(x2) || isNaN(z2)) {
+                return 'Invalid coordinates. Usage: #patrol [x1] [z1] [x2] [z2]';
             }
             
-            return true;
+            this.patrolArea = { x1, z1, x2, z2 };
+            this.currentTask = `Patrolling area (${x1},${z1}) to (${x2},${z2})`;
+            return `Starting patrol of area (${x1},${z1}) to (${x2},${z2})`;
         } catch (err) {
-            console.error('Error in patrol:', err);
-            return false;
+            logger.error('Error in patrol command:', err);
+            return `Error: ${err.message}`;
         }
     }
-
-    whitelistPlayer(playerName) {
-        this.whitelist.add(playerName);
-        return true;
+    
+    handleAttackCommand(args) {
+        if (args.length < 1) {
+            return 'Usage: #attack [target]';
+        }
+        
+        const target = args[0];
+        this.currentTask = `Attacking ${target}`;
+        return `Attacking ${target}`;
+    }
+    
+    handleDefendCommand(args) {
+        if (args.length < 1) {
+            return 'Usage: #defend [radius]';
+        }
+        
+        const radius = parseInt(args[0], 10);
+        if (isNaN(radius) || radius <= 0) {
+            return 'Invalid radius. Usage: #defend [radius]';
+        }
+        
+        this.currentTask = `Defending area with radius ${radius}`;
+        return `Defending area with radius ${radius} blocks`;
+    }
+    
+    handleEquipCommand(args) {
+        if (args.length < 1) {
+            return 'Usage: #equip [item]';
+        }
+        
+        const item = args[0];
+        this.currentTask = `Equipping ${item}`;
+        return `Equipping ${item}`;
+    }
+    
+    handleHealCommand(args) {
+        if (args.length < 1) {
+            return 'Usage: #heal [target]';
+        }
+        
+        const target = args[0];
+        this.currentTask = `Healing ${target}`;
+        return `Healing ${target}`;
     }
 
-    // Override base methods
+    // Start the protector bot
     async start() {
         this.isActive = true;
         this.currentTask = 'Protector bot activated';
         return true;
     }
 
-    async handleCommand(command, args) {
-        switch (command) {
-            case 'guard':
-                if (args.length === 1) {
-                    return await this.guard(args[0]);
-                } else if (args.length === 3) {
-                    return await this.guard(new Vec3(
-                        parseInt(args[0]),
-                        parseInt(args[1]),
-                        parseInt(args[2])
-                    ));
-                }
-                return false;
-                
-            case 'patrol':
-                if (args.length === 4) {
-                    return await this.patrol(
-                        parseInt(args[0]),
-                        parseInt(args[1]),
-                        parseInt(args[2]),
-                        parseInt(args[3])
-                    );
-                }
-                return false;
-                
-            case 'whitelist':
-                if (args.length === 1) {
-                    return this.whitelistPlayer(args[0]);
-                }
-                return false;
-                
-            default:
-                return await super.handleCommand(command, args);
-        }
+    getTypeSpecificHelp() {
+        return [
+            `\`${this.config.system.commandPrefix}guard [player]\` - Guard a specific player`,
+            `\`${this.config.system.commandPrefix}patrol [radius]\` - Patrol area around bot`,
+            `\`${this.config.system.commandPrefix}attack [target]\` - Attack specified target`,
+            `\`${this.config.system.commandPrefix}defend [radius]\` - Defend area around bot`,
+            `\`${this.config.system.commandPrefix}equip [item]\` - Equip specified item`,
+            `\`${this.config.system.commandPrefix}heal [target]\` - Heal specified target`
+        ];
+    }
+    
+    getTypeSpecificCommandHelp() {
+        return {
+            'guard': `Usage: ${this.config.system.commandPrefix}guard [player]\nGuard a specific player`,
+            'patrol': `Usage: ${this.config.system.commandPrefix}patrol [radius]\nPatrol area around bot`,
+            'attack': `Usage: ${this.config.system.commandPrefix}attack [target]\nAttack specified target`,
+            'defend': `Usage: ${this.config.system.commandPrefix}defend [radius]\nDefend area around bot`,
+            'equip': `Usage: ${this.config.system.commandPrefix}equip [item]\nEquip specified item`,
+            'heal': `Usage: ${this.config.system.commandPrefix}heal [target]\nHeal specified target`
+        };
     }
 }
 

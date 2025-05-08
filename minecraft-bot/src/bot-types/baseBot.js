@@ -130,37 +130,39 @@ class BaseBot {
    */
   handleHelpCommand(args) {
     const commandName = args[0];
+    const prefix = this.config.system.commandPrefix || '#';
     
     if (!commandName) {
-      // General help
+      // Bot-specific help
       return [
-        'Available commands:',
-        '#help [command] - Show this help message',
-        '#list - List all active bots and their status',
-        '#stop [bot_name] - Stop all bots or a specific bot',
-        '#goto [bot_name] [x] [y] [z] - Command bot(s) to move to coordinates',
-        '#come [bot_name] - Command bot(s) to come to your location',
-        '#status [bot_name] - Get detailed status of bot(s)'
+        `**${this.bot.username} (${this.type}) Commands:**`,
+        '',
+        '**Global Commands:**',
+        `\`${prefix}help [command]\` - Show this help message`,
+        `\`${prefix}status\` - Get detailed status`,
+        `\`${prefix}goto [x] [y] [z]\` - Move to coordinates`,
+        `\`${prefix}come\` - Come to your location`,
+        '',
+        '**Type-Specific Commands:**',
+        this.getTypeSpecificHelp(),
+        '',
+        `Use \`${prefix}help [command]\` for details on a specific command.`
       ];
     }
     
     // Help for specific command
-    switch (commandName) {
-      case 'help':
-        return 'Usage: #help [command] - Display help information for a command';
-      case 'list':
-        return 'Usage: #list - List all active bots and their status';
-      case 'stop':
-        return 'Usage: #stop [bot_name] - Stop current activity of all bots or a specific bot';
-      case 'goto':
-        return 'Usage: #goto [bot_name] [x] [y] [z] - Command bot(s) to move to specific coordinates';
-      case 'come':
-        return 'Usage: #come [bot_name] - Command bot(s) to come to your location';
-      case 'status':
-        return 'Usage: #status [bot_name] - Display detailed status of all bots or a specific bot';
-      default:
-        return `Unknown command: ${commandName}`;
-    }
+    const helpTexts = {
+      // Global commands
+      'help': `Usage: ${prefix}help [command]\nDisplay help information for a command`,
+      'status': `Usage: ${prefix}status\nDisplay detailed status of this bot`,
+      'goto': `Usage: ${prefix}goto [x] [y] [z]\nMove to specific coordinates`,
+      'come': `Usage: ${prefix}come\nCome to your location`,
+    };
+    
+    // Add type-specific command help
+    Object.assign(helpTexts, this.getTypeSpecificCommandHelp());
+    
+    return helpTexts[commandName] || `Unknown command: ${commandName}`;
   }
   
   /**
@@ -232,16 +234,49 @@ class BaseBot {
     const health = this.bot.health;
     const food = this.bot.food;
     const experience = this.bot.experience;
+    const inventory = this.bot.inventory;
+    
+    // Count items in inventory
+    const itemCounts = {};
+    if (inventory && inventory.items) {
+      inventory.items().forEach(item => {
+        if (item) {
+          const name = item.name;
+          itemCounts[name] = (itemCounts[name] || 0) + item.count;
+        }
+      });
+    }
+    
+    // Format inventory items
+    const inventoryText = Object.keys(itemCounts).length > 0 
+      ? Object.entries(itemCounts)
+          .map(([name, count]) => `${name}: ${count}`)
+          .join(', ')
+      : 'Empty';
+    
+    // Get equipped items
+    const equipment = {};
+    const slots = ['head', 'torso', 'legs', 'feet', 'hand'];
+    slots.forEach(slot => {
+      const item = this.bot.inventory.slots[this.bot.getEquipmentDestSlot(slot)];
+      equipment[slot] = item ? item.name : 'none';
+    });
     
     return [
-      `${this.bot.username} (${this.type}) Status:`,
-      `Position: [${Math.floor(position.x)}, ${Math.floor(position.y)}, ${Math.floor(position.z)}]`,
-      `Health: ${Math.floor(health)}/20`,
-      `Food: ${Math.floor(food)}/20`,
-      `XP Level: ${Math.floor(experience.level)}`,
-      `Current Task: ${this.currentTask || 'None'}`,
-      `Movement: ${this.movement.getMovementStatus()}`,
-      `Active: ${this.isActive}`
+      `**${this.bot.username} (${this.type}) Status:**`,
+      `**Position:** [${Math.floor(position.x)}, ${Math.floor(position.y)}, ${Math.floor(position.z)}]`,
+      `**Health:** ${Math.floor(health)}/20`,
+      `**Food:** ${Math.floor(food)}/20`,
+      `**XP Level:** ${Math.floor(experience.level)}`,
+      `**Current Task:** ${this.currentTask || 'Idle'}`,
+      `**Movement:** ${this.movement.getMovementStatus()}`,
+      `**Equipped:**`,
+      `- Helmet: ${equipment.head}`,
+      `- Chestplate: ${equipment.torso}`,
+      `- Leggings: ${equipment.legs}`,
+      `- Boots: ${equipment.feet}`,
+      `- Hand: ${equipment.hand}`,
+      `**Inventory:** ${inventoryText}`
     ];
   }
   
@@ -393,6 +428,15 @@ class BaseBot {
   // Abstract methods to be implemented by specific bot types
   async start() {
     throw new Error('start() must be implemented by bot type');
+  }
+
+  // Abstract methods to be implemented by specific bot types
+  getTypeSpecificHelp() {
+    throw new Error('getTypeSpecificHelp() must be implemented by bot type');
+  }
+  
+  getTypeSpecificCommandHelp() {
+    throw new Error('getTypeSpecificCommandHelp() must be implemented by bot type');
   }
 }
 
