@@ -78,43 +78,116 @@ class DiscordBot {
       const allCommands = commandParser.getCommands();
       const slashCommands = [];
       
+      console.log('Available command categories:', Object.keys(allCommands));
+      
       // Convert commands to Discord slash command format
       Object.entries(allCommands).forEach(([category, commands]) => {
+        console.log(`Processing category: ${category}, with ${commands.length} commands`);
+        
         commands.forEach(cmd => {
+          console.log(`Processing command: ${cmd.name}`);
+          
           // Only include commands that are available on Discord
           const fullCmd = commandParser.commands.get(cmd.name);
-          if (!fullCmd || !fullCmd.platforms.includes('discord')) return;
+          if (!fullCmd) {
+            console.log(`Command ${cmd.name} not found in command parser`);
+            return;
+          }
+          
+          if (!fullCmd.platforms.includes('discord')) {
+            console.log(`Command ${cmd.name} not available on Discord, skipping`);
+            return;
+          }
+          
+          // Sanitize command name for Discord's requirements
+          const sanitizedName = this._sanitizeCommandName(cmd.name);
+          console.log(`Sanitized command name: ${sanitizedName}`);
           
           // Create slash command data
           const slashCmd = {
-            name: cmd.name,
-            description: cmd.description || 'No description',
+            name: sanitizedName,
+            description: cmd.description?.substring(0, 100) || 'No description',
             options: this._generateCommandOptions(fullCmd)
           };
           
+          console.log(`Generated options for ${sanitizedName}:`, slashCmd.options.length);
+          
           slashCommands.push(slashCmd);
-          this.commands.set(cmd.name, fullCmd);
+          this.commands.set(sanitizedName, fullCmd);
         });
       });
       
       this.commandData = slashCommands;
+      
+      console.log(`Registering ${slashCommands.length} slash commands:`, 
+        slashCommands.map(cmd => cmd.name).join(', '));
+      
+      if (slashCommands.length === 0) {
+        console.warn('No slash commands to register. Check command configuration.');
+        return false;
+      }
       
       // Register commands with Discord API
       const rest = new REST({ version: '10' }).setToken(discordConfig.token);
       
       console.log('Started refreshing application (/) commands.');
       
-      await rest.put(
-        Routes.applicationCommands(this.client.user.id),
-        { body: slashCommands },
-      );
-      
-      console.log('Successfully reloaded application (/) commands.');
-      return true;
+      try {
+        // Check if we have a guild ID for faster development updates
+        if (discordConfig.guildId) {
+          console.log(`Using guild-specific command registration for guild ID: ${discordConfig.guildId}`);
+          await rest.put(
+            Routes.applicationGuildCommands(this.client.user.id, discordConfig.guildId),
+            { body: slashCommands },
+          );
+          console.log(`Registered ${slashCommands.length} commands to specific guild`);
+        } else {
+          // Global command registration (can take up to an hour to propagate)
+          console.log('Using global command registration (may take up to an hour to update)');
+          await rest.put(
+            Routes.applicationCommands(this.client.user.id),
+            { body: slashCommands },
+          );
+          console.log(`Registered ${slashCommands.length} commands globally`);
+        }
+        
+        console.log('Successfully reloaded application (/) commands.');
+        return true;
+      } catch (error) {
+        console.error('Error during API call to register commands:', error);
+        
+        // More detailed error information
+        if (error.rawError) {
+          console.error('Raw error details:', JSON.stringify(error.rawError, null, 2));
+        }
+        
+        return false;
+      }
     } catch (error) {
       console.error('Error registering slash commands:', error);
       return false;
     }
+  }
+  
+  /**
+   * Sanitize command name for Discord slash command requirements
+   * @private
+   * @param {string} name - Original command name
+   * @returns {string} - Sanitized command name
+   */
+  _sanitizeCommandName(name) {
+    // Remove any special characters except hyphens and underscores
+    // Convert to lowercase and ensure it's 1-32 characters
+    let sanitized = name.toLowerCase()
+                       .replace(/[^a-z0-9\-_]/g, '')
+                       .substring(0, 32);
+    
+    // Ensure it's not empty
+    if (!sanitized) {
+      sanitized = 'command';
+    }
+    
+    return sanitized;
   }
   
   /**
@@ -126,39 +199,88 @@ class DiscordBot {
   _generateCommandOptions(command) {
     // Default options that most commands will need
     const options = [];
+    const paramNames = new Set(); // Track used parameter names
     
     // Extract parameters from usage string
-    // Example: #goto [bot_name] [x] [y] [z]
-    const usageMatch = command.usage.match(/\[([^\]]+)\]/g);
+    // Match both <required> and [optional] parameters
+    // Example: #goto <bot_name> [x] [y] [z] or #login <botName> <botType> [serverIP] [port]
+    const usageMatch = command.usage.match(/[<\[]([^\]>]+)[>\]]/g);
     
     if (!usageMatch) return options;
     
-    usageMatch.forEach((param, index) => {
-      const paramName = param.replace(/[\[\]]/g, '').toLowerCase();
+    // Process required parameters first, then optional ones
+    const requiredParams = [];
+    const optionalParams = [];
+    
+    usageMatch.forEach((param) => {
+      if (param.startsWith('<')) {
+        requiredParams.push(param);
+      } else {
+        optionalParams.push(param);
+      }
+    });
+    
+    // Process all parameters in correct order (required first, then optional)
+    const orderedParams = [...requiredParams, ...optionalParams];
+    
+    orderedParams.forEach((param) => {
+      // Remove brackets/angles and get clean parameter name
+      let paramName = param.replace(/[<\[\]>]/g, '').toLowerCase();
       
       // Skip adding bot_name for commands that apply to all bots
       if (paramName === 'bot_name' && command.name === 'list') return;
       
+      // Ensure parameter names follow Discord requirements
+      paramName = paramName.replace(/[^a-z0-9\-_]/g, '');
+      
+      // Handle duplicate parameter names
+      if (paramNames.has(paramName)) {
+        let counter = 1;
+        let newName = `${paramName}${counter}`;
+        while (paramNames.has(newName)) {
+          counter++;
+          newName = `${paramName}${counter}`;
+        }
+        paramName = newName;
+      }
+      
+      paramNames.add(paramName);
+      
+      // Determine if parameter is required based on bracket type (< > = required, [ ] = optional)
+      const isRequired = param.startsWith('<');
+      
       let option = {
         name: paramName,
-        description: `The ${paramName.replace('_', ' ')} parameter`,
-        required: index === 0, // First parameter is usually required
+        description: `The ${param.replace(/[<\[\]>]/g, '').replace('_', ' ')} parameter`,
+        required: isRequired,
         type: ApplicationCommandOptionType.String
       };
       
       // Determine option type based on parameter name
-      if (paramName.match(/^[xyz]$/i)) {
+      if (paramName.match(/^[xyz]$/)) {
         option.type = ApplicationCommandOptionType.Number;
         option.description = `The ${paramName.toUpperCase()} coordinate`;
-      } else if (paramName === 'amount') {
+      } else if (paramName === 'amount' || paramName === 'port') {
         option.type = ApplicationCommandOptionType.Integer;
-      } else if (paramName === 'blockname' || paramName === 'itemname') {
-        option.description = `The name of the ${paramName === 'blockname' ? 'block' : 'item'}`;
-      } else if (paramName === 'playername') {
+        if (paramName === 'port') {
+          option.description = 'The Minecraft server port';
+        }
+      } else if (paramName.includes('blockname') || paramName.includes('itemname')) {
+        option.description = `The name of the ${paramName.includes('block') ? 'block' : 'item'}`;
+      } else if (paramName.includes('playername')) {
         option.description = 'The name of the player';
-      } else if (paramName === 'filename') {
+      } else if (paramName.includes('filename')) {
         option.description = 'The name of the file';
+      } else if (paramName === 'botname') {
+        option.description = 'The name for the bot';
+      } else if (paramName === 'bottype') {
+        option.description = 'The type of bot (minerbot, builderbot, protectorbot)';
+      } else if (paramName === 'serverip') {
+        option.description = 'The Minecraft server IP address';
       }
+      
+      // Truncate description to Discord's maximum length
+      option.description = option.description.substring(0, 100);
       
       options.push(option);
     });
@@ -182,11 +304,36 @@ class DiscordBot {
    * @returns {Promise<boolean>} - Whether send was successful
    */
   async sendMessage(message) {
-    if (!this.client || !this.channelId) {
+    if (!this.client) {
       return false;
     }
     
     try {
+      // If no specific channel is configured, use the system channel or first available text channel
+      if (!this.channelId) {
+        // Try to use the system channel if available
+        const guild = this.client.guilds.cache.first();
+        if (!guild) {
+          console.error('No guilds available for the bot');
+          return false;
+        }
+        
+        const channel = guild.systemChannel || 
+                        guild.channels.cache.find(ch => 
+                          ch.type === 0 && // TextChannel
+                          ch.permissionsFor(guild.members.me).has('SendMessages')
+                        );
+        
+        if (!channel) {
+          console.error('No suitable channel found to send messages');
+          return false;
+        }
+        
+        await channel.send(message);
+        return true;
+      }
+      
+      // Use the configured channel
       const channel = await this.client.channels.fetch(this.channelId);
       if (!channel) {
         console.error(`Discord channel ${this.channelId} not found`);
@@ -207,11 +354,36 @@ class DiscordBot {
    * @returns {Promise<boolean>} - Whether send was successful
    */
   async sendEmbed(embed) {
-    if (!this.client || !this.channelId) {
+    if (!this.client) {
       return false;
     }
     
     try {
+      // If no specific channel is configured, use the system channel or first available text channel
+      if (!this.channelId) {
+        // Try to use the system channel if available
+        const guild = this.client.guilds.cache.first();
+        if (!guild) {
+          console.error('No guilds available for the bot');
+          return false;
+        }
+        
+        const channel = guild.systemChannel || 
+                        guild.channels.cache.find(ch => 
+                          ch.type === 0 && // TextChannel
+                          ch.permissionsFor(guild.members.me).has('SendMessages')
+                        );
+        
+        if (!channel) {
+          console.error('No suitable channel found to send messages');
+          return false;
+        }
+        
+        await channel.send({ embeds: [embed] });
+        return true;
+      }
+      
+      // Use the configured channel
       const channel = await this.client.channels.fetch(this.channelId);
       if (!channel) {
         console.error(`Discord channel ${this.channelId} not found`);
@@ -315,9 +487,9 @@ class DiscordBot {
       // Convert interaction options to args format
       const args = this._optionsToArgs(interaction.options);
       
-      // Execute command
+      // Execute command using the original command name from the command object
       const result = await this.handleCommand({
-        message: `#${commandName} ${args.join(' ')}`, // Format compatible with existing command system
+        message: `#${command.name} ${args.join(' ')}`, // Use original command name, not sanitized
         platform: 'discord',
         sender: interaction.user.id,
         context: { interaction, discord: this }
@@ -480,4 +652,4 @@ class DiscordBot {
   }
 }
 
-module.exports = DiscordBot; 
+module.exports = DiscordBot;

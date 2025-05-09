@@ -40,10 +40,19 @@ async function createDiscordIntegration({ handleCommand, botManager, dataStore, 
   // Register slash commands if command parser is provided
   if (commandParser) {
     try {
-      await discordBot.registerSlashCommands(commandParser);
+      const registered = await discordBot.registerSlashCommands(commandParser);
+      if (!registered) {
+        console.warn('Failed to register slash commands, but Discord connection is active.');
+        console.warn('Commands may not be available until registration is fixed.');
+      }
     } catch (error) {
       console.error('Failed to register slash commands:', error);
+      console.warn('Discord connection is active, but commands may not be available.');
+      // Continue with connection even if command registration fails
+      // This allows the bot to still receive events and send messages
     }
+  } else {
+    console.warn('No command parser provided. Discord slash commands will not be registered.');
   }
   
   return {

@@ -16,6 +16,7 @@ const discordConfig = {
   token: mainConfig.discord.token,
   channelId: mainConfig.discord.channelId,
   enabled: mainConfig.discord.enabled,
+  guildId: mainConfig.discord.guildId || null, // For development, allows faster command updates
 };
 
 // Embed templates for different message types
@@ -136,4 +137,4 @@ const embedTemplates = {
 module.exports = {
   discordConfig,
   embedTemplates
-}; 
+};

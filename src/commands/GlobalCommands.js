@@ -125,11 +125,11 @@ function createGlobalCommands({ botManager, commandParser }) {
   commandParser.registerCommand({
     name: 'goto',
     description: 'Command bot(s) to move to coordinates or a block type',
-    usage: '#goto [botName] [x] [y] [z] or #goto [botName] [blockName]',
+    usage: '#goto <botName> [x] [y] [z] or #goto <botName> <blockName>',
     group: 'global',
     execute: async ({ args }) => {
       if (args.length < 2) {
-        throw new Error('Not enough arguments. Usage: #goto [botName] [x] [y] [z] or #goto [botName] [blockName]');
+        throw new Error('Not enough arguments. Usage: #goto <botName> [x] [y] [z] or #goto <botName> <blockName>');
       }
       
       const botName = args[0];
@@ -194,11 +194,11 @@ function createGlobalCommands({ botManager, commandParser }) {
   commandParser.registerCommand({
     name: 'come',
     description: 'Command bot(s) to come to your location',
-    usage: '#come [botName]',
+    usage: '#come <botName>',
     group: 'global',
     execute: async ({ args, sender, platform, context }) => {
       if (args.length < 1) {
-        throw new Error('Not enough arguments. Usage: #come [botName]');
+        throw new Error('Not enough arguments. Usage: #come <botName>');
       }
       
       const botName = args[0];
@@ -361,6 +361,67 @@ function createGlobalCommands({ botManager, commandParser }) {
         };
       } catch (error) {
         throw new Error(`Failed to read bot names file: ${error.message}`);
+      }
+    }
+  });
+  
+  // Register refresh commands command
+  commandParser.registerCommand({
+    name: 'refreshcommands',
+    description: 'Refresh Discord slash commands registration',
+    usage: '#refreshcommands',
+    platforms: ['minecraft', 'discord'],
+    group: 'system',
+    execute: async ({ context, platform }) => {
+      if (!context.discord) {
+        return {
+          success: true,
+          result: {
+            type: 'text',
+            data: 'This command can only be executed from Discord'
+          }
+        };
+      }
+      
+      try {
+        console.log('Manually refreshing Discord slash commands...');
+        
+        // Access the Discord bot through the context
+        const discordBot = context.discord;
+        
+        // Get the command parser from the application
+        const commandParser = require('./index').commandParser;
+        
+        if (!commandParser) {
+          return {
+            success: false,
+            error: 'Command parser not found'
+          };
+        }
+        
+        // Force refresh the commands
+        const success = await discordBot.registerSlashCommands(commandParser);
+        
+        if (success) {
+          return {
+            success: true,
+            result: {
+              type: 'text',
+              data: 'Discord slash commands have been refreshed successfully. They should appear within a few minutes.'
+            }
+          };
+        } else {
+          return {
+            success: false,
+            error: 'Failed to refresh Discord slash commands. Check console for errors.'
+          };
+        }
+      } catch (error) {
+        console.error('Error refreshing Discord commands:', error);
+        return {
+          success: false,
+          error: `Error refreshing commands: ${error.message}`
+        };
       }
     }
   });
