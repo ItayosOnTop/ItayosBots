@@ -1,101 +1,122 @@
 /**
- * Discord integration configuration
- * Settings and utilities for Discord bot integration
+ * Discord Configuration
+ * 
+ * This file contains Discord-specific configuration and templates.
  */
 
-const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
-const mainConfig = require('../../config');
+const { EmbedBuilder } = require('discord.js');
+const config = require('../../config');
 
-// Discord client configuration
+// Discord bot configuration
 const discordConfig = {
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-  ],
-  token: mainConfig.discord.token,
-  channelId: mainConfig.discord.channelId,
-  enabled: mainConfig.discord.enabled,
-  guildId: mainConfig.discord.guildId || null, // For development, allows faster command updates
+  enabled: config.discord.enabled,
+  token: config.discord.token,
+  channelId: config.discord.channelId,
+  guildId: config.discord.guildId
 };
 
-// Embed templates for different message types
+// Embed templates for various messages
 const embedTemplates = {
-  // Status report embed
-  status: (botName, data) => {
-    return new EmbedBuilder()
-      .setColor('#00FF00')
-      .setTitle(`${botName} Status Report`)
-      .setDescription(`Current status of ${botName}`)
-      .addFields(
-        { name: 'Status', value: data.status || 'Unknown' },
-        { name: 'Location', value: `X: ${data.position?.x || 0}, Y: ${data.position?.y || 0}, Z: ${data.position?.z || 0}` },
-        { name: 'Health', value: `${data.health || 0} / ${data.maxHealth || 20}` },
-        { name: 'Inventory', value: `${data.inventoryFull || 0}% full` },
-        { name: 'Current Task', value: data.currentTask || 'None' }
-      )
-      .setTimestamp();
-  },
-  
-  // Error notification embed
-  error: (botName, errorMessage) => {
-    return new EmbedBuilder()
-      .setColor('#FF0000')
-      .setTitle(`${botName} Error`)
-      .setDescription(errorMessage)
-      .setTimestamp();
-  },
-  
-  // Success notification embed
+  // Success message embed
   success: (botName, message) => {
     return new EmbedBuilder()
       .setColor('#00FF00')
-      .setTitle(`${botName} Success`)
+      .setTitle(`${botName} - Success`)
       .setDescription(message)
       .setTimestamp();
   },
   
-  // Help embed
-  help: (commands) => {
+  // Error message embed
+  error: (botName, errorMessage) => {
+    return new EmbedBuilder()
+      .setColor('#FF0000')
+      .setTitle(`${botName} - Error`)
+      .setDescription(errorMessage)
+      .setTimestamp();
+  },
+  
+  // Simple info message embed
+  info: (botName, message) => {
+    return new EmbedBuilder()
+      .setColor('#00FF00')
+      .setTitle(`${botName} - Info`)
+      .setDescription(message)
+      .setTimestamp();
+  },
+  
+  // Bot status embed
+  status: (botName, statusData) => {
     const embed = new EmbedBuilder()
       .setColor('#0099FF')
-      .setTitle('Available Commands')
-      .setDescription('Here are the commands you can use:');
+      .setTitle(`Bot Status: ${botName}`)
+      .setTimestamp();
     
-    // Add fields for each command category
-    Object.entries(commands).forEach(([category, commandList]) => {
-      const commandText = commandList.map(cmd => `\`/${cmd.name}\`: ${cmd.description}`).join('\n');
-      embed.addFields({ name: category, value: commandText });
-    });
+    if (!statusData) {
+      embed.setDescription('Status information not available');
+      return embed;
+    }
+    
+    // Add basic status fields
+    embed.addFields([
+      { name: 'Type', value: statusData.type || 'Unknown', inline: true },
+      { name: 'Status', value: statusData.status || 'Unknown', inline: true },
+      { name: 'Task', value: statusData.currentTask || 'None', inline: true }
+    ]);
+    
+    // Add position if available
+    if (statusData.position) {
+      embed.addFields({
+        name: 'Position',
+        value: `X: ${Math.round(statusData.position.x)} Y: ${Math.round(statusData.position.y)} Z: ${Math.round(statusData.position.z)}`
+      });
+    }
+    
+    // Add additional info based on bot type
+    if (statusData.type === 'protector') {
+      if (statusData.guardTarget) {
+        embed.addFields({
+          name: 'Guarding', 
+          value: statusData.guardTarget.type === 'player' 
+            ? `Player: ${statusData.guardTarget.name}`
+            : `Position: ${statusData.guardTarget.position.x}, ${statusData.guardTarget.position.y}, ${statusData.guardTarget.position.z}`
+        });
+      }
+    }
     
     return embed;
   },
   
-  // Bot list embed
-  botList: (bots) => {
+  // Help embed
+  help: (data) => {
+    if (!data) {
+      return new EmbedBuilder()
+        .setColor('#0099FF')
+        .setTitle('ItayosBot Help')
+        .setDescription('No help information available')
+        .setTimestamp();
+    }
+    
     const embed = new EmbedBuilder()
-      .setColor('#00FF00')
-      .setTitle('Active Bots')
-      .setDescription(`Total: ${bots.length} bot(s)`);
-      
-    // Group by type
-    const botsByType = {};
+      .setColor('#0099FF')
+      .setTitle('ItayosBot Help')
+      .setDescription('Available Commands')
+      .setTimestamp();
     
-    bots.forEach(bot => {
-      if (!botsByType[bot.type]) {
-        botsByType[bot.type] = [];
-      }
-      
-      botsByType[bot.type].push(bot);
-    });
-    
-    // Add fields for each type
-    for (const [type, typeBots] of Object.entries(botsByType)) {
-      const botList = typeBots.map(bot => 
-        `${bot.name} (${bot.status}${bot.task ? `: ${bot.task}` : ''})`
-      ).join('\n');
-      
-      embed.addFields({ name: type, value: botList || 'None' });
+    // Add fields for each command group
+    if (typeof data === 'object') {
+      Object.entries(data).forEach(([category, commands]) => {
+        if (commands && commands.length > 0) {
+          let fieldValue = '';
+          commands.forEach(cmd => {
+            fieldValue += `\`${cmd.usage || cmd.name}\` - ${cmd.description || 'No description'}\n`;
+          });
+          
+          embed.addFields({
+            name: category.charAt(0).toUpperCase() + category.slice(1),
+            value: fieldValue
+          });
+        }
+      });
     }
     
     return embed;
@@ -103,32 +124,56 @@ const embedTemplates = {
   
   // Command help embed
   commandHelp: (command) => {
+    if (!command) {
+      return new EmbedBuilder()
+        .setColor('#0099FF')
+        .setTitle('Command Help')
+        .setDescription('Command information not available')
+        .setTimestamp();
+    }
+    
     return new EmbedBuilder()
       .setColor('#0099FF')
-      .setTitle(`Command: /${command.name}`)
-      .setDescription(command.description)
-      .addFields(
-        { name: 'Usage', value: command.usage.replace('#', '/') },
-        { name: 'Category', value: command.group }
-      );
+      .setTitle(`Command: ${command.name}`)
+      .setDescription(command.description || 'No description available')
+      .addFields([
+        { name: 'Usage', value: command.usage || 'Not specified', inline: true },
+        { name: 'Group', value: command.group || 'Not specified', inline: true }
+      ])
+      .setTimestamp();
   },
   
   // Bot help embed
-  botHelp: (data) => {
-    const { botName, botType, commands } = data;
+  botHelp: (botType) => {
+    return new EmbedBuilder()
+      .setColor('#0099FF')
+      .setTitle(`Bot Type: ${botType}`)
+      .setDescription(`Commands available for ${botType} bots`)
+      .setTimestamp();
+  },
+  
+  // Bot list embed
+  botList: (bots) => {
+    if (!bots || !Array.isArray(bots) || bots.length === 0) {
+      return new EmbedBuilder()
+        .setColor('#0099FF')
+        .setTitle('Bot List')
+        .setDescription('No bots currently active')
+        .setTimestamp();
+    }
     
     const embed = new EmbedBuilder()
       .setColor('#0099FF')
-      .setTitle(`Help for ${botName} (${botType})`)
-      .setDescription(`Available commands for ${botType} bots:`);
-      
-    // Add commands
-    if (commands && commands.length > 0) {
-      const commandText = commands.map(cmd => `\`/${cmd.name}\`: ${cmd.description}`).join('\n');
-      embed.addFields({ name: `${botType} Commands`, value: commandText });
-    } else {
-      embed.addFields({ name: 'Commands', value: 'No specific commands available' });
-    }
+      .setTitle('Active Bots')
+      .setDescription(`${bots.length} bot(s) currently active`)
+      .setTimestamp();
+    
+    bots.forEach(bot => {
+      embed.addFields({
+        name: bot.name,
+        value: `Type: ${bot.type}\nStatus: ${bot.status}\nTask: ${bot.task || 'None'}`
+      });
+    });
     
     return embed;
   }

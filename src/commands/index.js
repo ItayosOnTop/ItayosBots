@@ -8,7 +8,7 @@ const CommandParser = require('./CommandParser');
 const BotManager = require('./BotManager');
 const createGlobalCommands = require('./GlobalCommands');
 const createProtectorCommands = require('./ProtectorCommands');
-const { createProtectorBot } = require('../bots/specialized');
+const { createProtectorBot, createMinerBot, createBuilderBot } = require('../bots/specialized');
 
 /**
  * Create and initialize the command system
@@ -26,6 +26,8 @@ function createCommandSystem(options = {}) {
   
   // Register bot factories
   botManager.registerBotFactory('protector', createProtectorBot);
+  botManager.registerBotFactory('miner', createMinerBot);
+  botManager.registerBotFactory('builder', createBuilderBot);
   
   // Register commands
   createGlobalCommands({

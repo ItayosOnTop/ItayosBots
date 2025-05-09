@@ -209,41 +209,74 @@ class BaseBot extends EventEmitter {
    * @private
    */
   _setupPlugins() {
-    // Pathfinder
-    this.bot.loadPlugin(pathfinder);
-    const mcData = require('minecraft-data')(this.bot.version);
-    const movements = new Movements(this.bot, mcData);
-    
-    // Adjust movement settings
-    movements.canDig = true;
-    movements.scafoldingBlocks = [];
-    
-    this.bot.pathfinder.setMovements(movements);
-    
-    // Auto eat
-    this.bot.loadPlugin(autoeat);
-    this.bot.autoEat.options = {
-      priority: 'foodPoints',
-      startAt: 14,
-      bannedFood: []
-    };
-    
-    // PVP
-    this.bot.loadPlugin(pvp);
-    
-    // Block collection
-    this.bot.loadPlugin(collectBlock);
-    
-    // Armor manager
-    this.bot.loadPlugin(armorManager);
-    
-    // Tool plugin
-    this.bot.loadPlugin(toolPlugin);
-    
-    // Totem plugin
-    this.bot.loadPlugin(totemPlugin);
-    
-    this.log.info('All plugins loaded successfully');
+    try {
+      // Safe plugin loading helper
+      const safeLoadPlugin = (plugin, name) => {
+        try {
+          if (typeof plugin === 'function') {
+            this.bot.loadPlugin(plugin);
+            return true;
+          } else if (plugin && typeof plugin.plugin === 'function') {
+            this.bot.loadPlugin(plugin.plugin);
+            return true;
+          } else {
+            this.log.warn(`${name} plugin is not a function, skipping`);
+            return false;
+          }
+        } catch (err) {
+          this.log.warn(`Error loading ${name} plugin: ${err.message}`);
+          return false;
+        }
+      };
+      
+      // Pathfinder
+      safeLoadPlugin(pathfinder, 'Pathfinder');
+      try {
+        const mcData = require('minecraft-data')(this.bot.version);
+        const movements = new Movements(this.bot, mcData);
+        
+        // Adjust movement settings
+        movements.canDig = true;
+        movements.scafoldingBlocks = [];
+        
+        if (this.bot.pathfinder) {
+          this.bot.pathfinder.setMovements(movements);
+        } else {
+          this.log.warn('Pathfinder not properly initialized');
+        }
+      } catch (err) {
+        this.log.warn(`Error configuring pathfinder: ${err.message}`);
+      }
+      
+      // Auto eat
+      safeLoadPlugin(autoeat, 'AutoEat');
+      if (this.bot.autoEat) {
+        this.bot.autoEat.options = {
+          priority: 'foodPoints',
+          startAt: 14,
+          bannedFood: []
+        };
+      }
+      
+      // PVP
+      safeLoadPlugin(pvp, 'PVP');
+      
+      // Block collection
+      safeLoadPlugin(collectBlock, 'CollectBlock');
+      
+      // Armor manager
+      safeLoadPlugin(armorManager, 'ArmorManager');
+      
+      // Tool plugin
+      safeLoadPlugin(toolPlugin, 'Tool');
+      
+      // Totem plugin
+      safeLoadPlugin(totemPlugin, 'Totem');
+      
+      this.log.info('Plugins loaded successfully');
+    } catch (error) {
+      this._handleError('Failed to set up plugins', error);
+    }
   }
   
   /**
