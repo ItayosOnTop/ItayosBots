@@ -1,5 +1,7 @@
 # ItayosBot
 
+# ABANDONED
+
 Advanced Minecraft bot system built on Mineflayer for automating various tasks through multiple cooperative bots with Discord integration.
 
 ## Features
