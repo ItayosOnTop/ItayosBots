@@ -32,7 +32,7 @@
   - [ ] mineflayer-totem-auto
   - [ ] discord.js
   - [ ] fs-extra
-  - [ ] dotenv (for environment variables)
+  - [ ] config.js (for configuration)
 - [ ] Create configuration files
   - [ ] Core configuration for system-wide settings
   - [ ] Bot-specific configuration templates
@@ -90,6 +90,20 @@
   - [ ] Input validation
 
 ## Specialized Bots
+
+### ProtectorBot
+- [ ] Create ProtectorBot class extending BaseBot
+- [ ] Implement specialized functionalities:
+  - [ ] Entity detection and threat assessment
+  - [ ] Combat tactics and weapon usage
+  - [ ] Area patrol algorithms
+  - [ ] Player protection system
+- [ ] Implement ProtectorBot-specific commands:
+  - [ ] Guard command
+  - [ ] Patrol command
+  - [ ] Follow command
+  - [ ] Whitelist command
+
 ### MinerBot
 - [ ] Create MinerBot class extending BaseBot
 - [ ] Implement specialized functionalities:
@@ -112,19 +126,6 @@
 - [ ] Implement BuilderBot-specific commands:
   - [ ] Build command
   - [ ] Blueprint management commands
-
-### ProtectorBot
-- [ ] Create ProtectorBot class extending BaseBot
-- [ ] Implement specialized functionalities:
-  - [ ] Entity detection and threat assessment
-  - [ ] Combat tactics and weapon usage
-  - [ ] Area patrol algorithms
-  - [ ] Player protection system
-- [ ] Implement ProtectorBot-specific commands:
-  - [ ] Guard command
-  - [ ] Patrol command
-  - [ ] Follow command
-  - [ ] Whitelist command
 
 ## Shared Data System
 - [ ] Design data structure for shared information
