@@ -27,7 +27,7 @@ module.exports = {
     server: {
       host: 'localhost', // Minecraft server address
       port: 25565, // Minecraft server port
-      version: '1.19.2', // Minecraft version
+      version: '1.21', // Minecraft version
     },
   
     // Bot configuration
@@ -37,26 +37,6 @@ module.exports = {
         viewDistance: 4, // View distance in chunks
         tickRate: 50, // Bot tick rate in milliseconds
       },
-      
-      // Bot instances to create on startup
-      instances: [
-        {
-          username: 'MinerBot1',
-          type: 'miner',
-          password: '', // Optional password for online-mode servers
-        },
-        {
-          username: 'BuilderBot1',
-          type: 'builder',
-          password: '',
-        },
-        {
-          username: 'ProtectorBot1',
-          type: 'protector',
-          password: '',
-        },
-      ],
-    },
   
     // Type-specific settings
     botTypes: {
@@ -66,36 +46,22 @@ module.exports = {
         returnWhenInventoryFull: true, // Whether to return to base when inventory is full
       },
       builder: {
-        schematicsFolder: './schematics', // Folder containing schematic files
+        schematicsFolder: './builds', // Folder containing schematic files
         maxBuildHeight: 256, // Maximum build height
         autoCraftMissingItems: true, // Whether to craft missing items automatically
       },
       protector: {
         protectionRadius: 50, // Radius in blocks to protect
-        aggressionLevel: 'medium', // low, medium, high
+        aggressionLevel: 'high', // low, medium, high
         retreatHealthThreshold: 7, // Health points at which to retreat
       },
     },
   
-    // Storage settings
-    storage: {
-      chestLocations: {
-        valuables: {x: 0, y: 0, z: 0}, // Location for storing valuable items
-        tools: {x: 0, y: 0, z: 0}, // Location for storing tools
-        blocks: {x: 0, y: 0, z: 0}, // Location for storing building blocks
-      },
-    },
+
   
     // Safe zones where bots can retreat to
     safeZones: [
       {x: 0, y: 0, z: 0, radius: 20, name: 'Base'},
     ],
-  
-    // Advanced settings
-    advanced: {
-      logLevel: 'info', // debug, info, warn, error
-      pathfindingTimeout: 10000, // Timeout for pathfinding in milliseconds
-      maxPathfindingDistance: 100, // Maximum pathfinding distance in blocks
-      memoryUsageLimit: 1024, // Memory usage limit in MB
-    },
   }; 
+}
