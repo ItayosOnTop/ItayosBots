@@ -7,6 +7,7 @@
 
 const BaseBot = require('../base');
 const botConfig = require('../../shared/botConfig');
+const mainConfig = require('../../../config');
 const { Vec3 } = require('vec3');
 
 class ProtectorBot extends BaseBot {
@@ -41,6 +42,9 @@ class ProtectorBot extends BaseBot {
     this._patrolTick = this._patrolTick.bind(this);
     this._guardTick = this._guardTick.bind(this);
     this._setupProtectorEventHandlers = this._setupProtectorEventHandlers.bind(this);
+    
+    // Add command handling
+    this.handleCommand = this.handleCommand.bind(this);
   }
   
   /**
@@ -108,36 +112,40 @@ class ProtectorBot extends BaseBot {
   }
   
   /**
-   * Set up patrol between specified points
+   * Set up patrol between multiple points
    * @param {Object} options - Patrol options
-   * @param {Array<Object>} options.points - Array of points to patrol between
-   * @param {number} [options.radius=5] - Checking radius at each point
+   * @param {Array<Object>} options.points - Array of positions to patrol
+   * @param {number} options.radius - Radius to check for enemies at each point
    * @returns {Promise<boolean>} - Whether setup was successful
    */
-  async patrol({ points, radius = 5 }) {
+  async patrol({ points, radius }) {
     if (!this.bot || !this.active) {
       throw new Error('Bot is not active');
     }
     
+    if (!points || points.length < 2) {
+      throw new Error('At least two patrol points are required');
+    }
+    
     try {
-      if (!points || points.length < 2) {
-        throw new Error('Patrol requires at least 2 points');
-      }
-      
       // Stop any current protection tasks
       this._stopProtectionTasks();
       
       // Set up patrol
-      this.patrolPoints = points;
+      this.patrolPoints = points.map(p => new Vec3(p.x, p.y, p.z));
+      this.patrolCheckRadius = radius || 5;
       this.currentPatrolIndex = 0;
-      this.patrolRadius = radius;
       this.patrolling = true;
       
-      this.currentTask = 'Patrolling';
-      this.log.info(`Started patrol with ${points.length} points`);
+      this.currentTask = `Patrolling between ${points.length} points`;
+      this.log.info(this.currentTask);
       
-      // Start patrol loop
-      this._patrolTick();
+      // Move to the first patrol point to start
+      const firstPoint = this.patrolPoints[0];
+      await this.goTo(firstPoint);
+      
+      // Start patrol tick
+      this.patrolTickInterval = setInterval(this._patrolTick, 1000);
       
       return true;
     } catch (error) {
@@ -323,43 +331,36 @@ class ProtectorBot extends BaseBot {
   }
   
   /**
-   * Patrol tick handler
+   * Patrol tick - handles movement between patrol points
    * @private
    */
   async _patrolTick() {
-    if (!this.bot || !this.active || !this.patrolling) {
-      return;
-    }
+    if (!this.patrolling || !this.active || !this.bot) return;
     
     try {
-      // Get current patrol point
+      // Check if we've reached the current patrol point
       const currentPoint = this.patrolPoints[this.currentPatrolIndex];
+      const distanceToPoint = this.bot.entity.position.distanceTo(currentPoint);
       
-      // Move to current point if not already there
-      const botPos = this.bot.entity.position;
-      const targetPos = new Vec3(currentPoint.x, currentPoint.y, currentPoint.z);
-      
-      if (botPos.distanceTo(targetPos) > 3) {
-        await this.goTo(currentPoint);
-      }
-      
-      // Check for threats at current position
-      await this._checkForThreats(targetPos, this.patrolRadius);
-      
-      // Move to next patrol point
-      this.currentPatrolIndex = (this.currentPatrolIndex + 1) % this.patrolPoints.length;
-      
-      // Schedule next patrol tick
-      if (this.patrolling) {
-        setTimeout(this._patrolTick, 5000);
+      if (distanceToPoint <= 2) {
+        // We've reached the current point, check for threats
+        this._checkForThreats(currentPoint, this.patrolCheckRadius);
+        
+        // Move to next point
+        this.currentPatrolIndex = (this.currentPatrolIndex + 1) % this.patrolPoints.length;
+        const nextPoint = this.patrolPoints[this.currentPatrolIndex];
+        
+        // Only try to move if not in combat
+        if (!this.targetEntity) {
+          this.bot.pathfinder.setGoal(null); // Cancel current movement
+          this.goTo(nextPoint).catch(e => this.log.warn(`Navigation error: ${e.message}`));
+        }
+      } else if (!this.targetEntity && !this.bot.pathfinder.isMoving()) {
+        // If we're not moving and should be, try to move to the current point
+        this.goTo(currentPoint).catch(e => this.log.warn(`Navigation error: ${e.message}`));
       }
     } catch (error) {
-      this._handleError('Error in patrol tick', error);
-      
-      // Try to continue patrolling despite error
-      if (this.patrolling) {
-        setTimeout(this._patrolTick, 10000);
-      }
+      this.log.warn(`Error in patrol tick: ${error.message}`);
     }
   }
   
@@ -539,6 +540,344 @@ class ProtectorBot extends BaseBot {
       this._handleError('Failed to equip gear', error);
       return false;
     }
+  }
+
+  /**
+   * Handle protector-specific commands
+   * @param {string} username - Username of the player who sent the command
+   * @param {string} command - The command (without prefix) 
+   * @param {Array<string>} args - Command arguments
+   */
+  handleCommand(username, command, args) {
+    this.log.info(`ProtectorBot received command: ${command} ${args.join(' ')}`);
+    
+    switch (command) {
+      case 'guard':
+        this._handleGuardCommand(username, args);
+        break;
+      case 'patrol':
+        this._handlePatrolCommand(username, args);
+        break;
+      case 'attack':
+        this._handleAttackCommand(username, args);
+        break;
+      case 'follow':
+        this._handleFollowCommand(username, args);
+        break;
+      case 'whitelist':
+        this._handleWhitelistCommand(username, args);
+        break;
+      case 'aggression':
+        this._handleAggressionCommand(username, args);
+        break;
+      case 'stopprotection':
+        this._handleStopProtectionCommand(username);
+        break;
+      case 'help':
+        this._displayProtectorHelp(username);
+        break;
+      default:
+        // Try base commands
+        super._handleCommand(username, command, args);
+        break;
+    }
+  }
+
+  /**
+   * Handle the guard command
+   * @private
+   * @param {string} username - Username of the player who sent the command
+   * @param {Array<string>} args - Command arguments
+   */
+  async _handleGuardCommand(username, args) {
+    try {
+      if (args.length === 0) {
+        // Guard the player who sent the command
+        this.chat(`Starting to guard you, ${username}.`);
+        const success = await this.guardPlayer({ playerName: username });
+        if (!success) {
+          this.chat(`Failed to guard you, ${username}.`);
+        }
+      } else if (args.length === 1) {
+        // Guard another player
+        const targetPlayer = args[0];
+        this.chat(`Starting to guard ${targetPlayer}.`);
+        const success = await this.guardPlayer({ playerName: targetPlayer });
+        if (!success) {
+          this.chat(`Failed to guard ${targetPlayer}.`);
+        }
+      } else if (args.length >= 3) {
+        // Guard a position
+        const x = parseInt(args[0]);
+        const y = parseInt(args[1]);
+        const z = parseInt(args[2]);
+        const radius = args.length >= 4 ? parseInt(args[3]) : 16;
+        
+        if (isNaN(x) || isNaN(y) || isNaN(z) || isNaN(radius)) {
+          this.chat('Invalid coordinates or radius. Usage: guard <x> <y> <z> [radius]');
+          return;
+        }
+        
+        this.chat(`Guarding position (${x}, ${y}, ${z}) with radius ${radius}.`);
+        const success = await this.guardPosition({ position: { x, y, z }, radius });
+        if (!success) {
+          this.chat(`Failed to guard position (${x}, ${y}, ${z}).`);
+        }
+      } else {
+        this.chat('Usage: guard [player] or guard <x> <y> <z> [radius]');
+      }
+    } catch (error) {
+      this.chat(`Error handling guard command: ${error.message}`);
+    }
+  }
+
+  /**
+   * Handle the patrol command
+   * @private
+   * @param {string} username - Username of the player who sent the command
+   * @param {Array<string>} args - Command arguments
+   */
+  async _handlePatrolCommand(username, args) {
+    try {
+      if (args.length < 6) {
+        this.chat('Usage: patrol <x1> <y1> <z1> <x2> <y2> <z2> [checkRadius]');
+        return;
+      }
+      
+      const x1 = parseInt(args[0]);
+      const y1 = parseInt(args[1]);
+      const z1 = parseInt(args[2]);
+      const x2 = parseInt(args[3]);
+      const y2 = parseInt(args[4]);
+      const z2 = parseInt(args[5]);
+      const checkRadius = args.length >= 7 ? parseInt(args[6]) : 5;
+      
+      if ([x1, y1, z1, x2, y2, z2, checkRadius].some(isNaN)) {
+        this.chat('Invalid coordinates or radius. Usage: patrol <x1> <y1> <z1> <x2> <y2> <z2> [checkRadius]');
+        return;
+      }
+      
+      this.chat(`Starting patrol between (${x1}, ${y1}, ${z1}) and (${x2}, ${y2}, ${z2}) with check radius ${checkRadius}.`);
+      
+      const points = [
+        { x: x1, y: y1, z: z1 },
+        { x: x1, y: y1, z: z2 },
+        { x: x2, y: y2, z: z2 },
+        { x: x2, y: y2, z: z1 }
+      ];
+      
+      const success = await this.patrol({ points, radius: checkRadius });
+      if (!success) {
+        this.chat('Failed to start patrol.');
+      }
+    } catch (error) {
+      this.chat(`Error handling patrol command: ${error.message}`);
+    }
+  }
+
+  /**
+   * Handle the attack command
+   * @private
+   * @param {string} username - Username of the player who sent the command
+   * @param {Array<string>} args - Command arguments
+   */
+  async _handleAttackCommand(username, args) {
+    try {
+      if (args.length === 0) {
+        this.chat('Usage: attack <mob> or attack <player>');
+        return;
+      }
+      
+      const targetName = args[0];
+      let target = this.bot.players[targetName]?.entity;
+      
+      if (!target) {
+        // Try to find a mob with this name
+        const entities = Object.values(this.bot.entities).filter(e => 
+          e.name?.toLowerCase() === targetName.toLowerCase() ||
+          e.username?.toLowerCase() === targetName.toLowerCase() ||
+          e.displayName?.toLowerCase().includes(targetName.toLowerCase())
+        );
+        
+        if (entities.length > 0) {
+          target = entities[0];
+        }
+      }
+      
+      if (!target) {
+        this.chat(`Couldn't find target: ${targetName}`);
+        return;
+      }
+      
+      // Don't attack if whitelisted
+      if (target.username && this.whitelist.includes(target.username)) {
+        this.chat(`${target.username} is on my whitelist. I won't attack them.`);
+        return;
+      }
+      
+      this.chat(`Attacking ${target.username || target.displayName || target.name}!`);
+      
+      if (this.bot.pvp) {
+        this.targetEntity = target;
+        await this.bot.pvp.attack(target);
+      } else {
+        this.chat("PVP capabilities not available.");
+      }
+    } catch (error) {
+      this.chat(`Error handling attack command: ${error.message}`);
+    }
+  }
+
+  /**
+   * Handle the follow command
+   * @private
+   * @param {string} username - Username of the player who sent the command
+   * @param {Array<string>} args - Command arguments
+   */
+  async _handleFollowCommand(username, args) {
+    try {
+      const playerName = args.length > 0 ? args[0] : username;
+      const followDistance = args.length > 1 ? parseInt(args[1]) : 3;
+      
+      if (isNaN(followDistance)) {
+        this.chat('Invalid follow distance. Usage: follow [player] [distance]');
+        return;
+      }
+      
+      this.chat(`Following ${playerName} at distance ${followDistance}.`);
+      const success = await this.guardPlayer({ playerName, followDistance });
+      
+      if (!success) {
+        this.chat(`Failed to follow ${playerName}.`);
+      }
+    } catch (error) {
+      this.chat(`Error handling follow command: ${error.message}`);
+    }
+  }
+
+  /**
+   * Handle the whitelist command
+   * @private
+   * @param {string} username - Username of the player who sent the command
+   * @param {Array<string>} args - Command arguments
+   */
+  _handleWhitelistCommand(username, args) {
+    try {
+      if (args.length < 2) {
+        this.chat('Usage: whitelist add/remove <player>');
+        return;
+      }
+      
+      const action = args[0].toLowerCase();
+      const targetPlayer = args[1];
+      
+      if (action === 'add') {
+        if (this.whitelistPlayer(targetPlayer)) {
+          this.chat(`Added ${targetPlayer} to whitelist.`);
+        } else {
+          this.chat(`Failed to add ${targetPlayer} to whitelist.`);
+        }
+      } else if (action === 'list') {
+        const whitelistText = this.whitelist.length > 0 
+          ? `Whitelist: ${this.whitelist.join(', ')}` 
+          : 'Whitelist is empty';
+        this.chat(whitelistText);
+      } else if (action === 'remove') {
+        if (this.unwhitelistPlayer(targetPlayer)) {
+          this.chat(`Removed ${targetPlayer} from whitelist.`);
+        } else {
+          this.chat(`Failed to remove ${targetPlayer} from whitelist.`);
+        }
+      } else {
+        this.chat('Usage: whitelist add/remove/list <player>');
+      }
+    } catch (error) {
+      this.chat(`Error handling whitelist command: ${error.message}`);
+    }
+  }
+
+  /**
+   * Handle the aggression command
+   * @private
+   * @param {string} username - Username of the player who sent the command
+   * @param {Array<string>} args - Command arguments
+   */
+  _handleAggressionCommand(username, args) {
+    try {
+      if (args.length === 0) {
+        this.chat(`Current aggression level: ${this.aggressionLevel}`);
+        return;
+      }
+      
+      const level = args[0].toLowerCase();
+      
+      if (!['low', 'medium', 'high'].includes(level)) {
+        this.chat('Invalid aggression level. Use: low, medium, or high');
+        return;
+      }
+      
+      if (this.setAggressionLevel(level)) {
+        this.chat(`Aggression level set to ${level}.`);
+      } else {
+        this.chat(`Failed to set aggression level to ${level}.`);
+      }
+    } catch (error) {
+      this.chat(`Error handling aggression command: ${error.message}`);
+    }
+  }
+
+  /**
+   * Handle the stopprotection command
+   * @private
+   * @param {string} username - Username of the player who sent the command
+   */
+  _handleStopProtectionCommand(username) {
+    try {
+      if (this.stopProtection()) {
+        this.chat('Stopped all protection activities.');
+      } else {
+        this.chat('Failed to stop protection activities.');
+      }
+    } catch (error) {
+      this.chat(`Error stopping protection: ${error.message}`);
+    }
+  }
+
+  /**
+   * Display help for protector commands
+   * @private
+   * @param {string} username - Username of the player who sent the command
+   */
+  _displayProtectorHelp(username) {
+    const prefix = mainConfig.system.commandPrefix;
+    const helpMessages = [
+      `${prefix}guard [player] or ${prefix}guard <x> <y> <z> [radius] - Guard a player or position`,
+      `${prefix}patrol <x1> <y1> <z1> <x2> <y2> <z2> [radius] - Patrol between points`,
+      `${prefix}follow [player] [distance] - Follow a player`,
+      `${prefix}attack <mob/player> - Attack a specific target`,
+      `${prefix}whitelist add/remove/list <player> - Manage whitelist`,
+      `${prefix}aggression [low/medium/high] - Set aggression level`,
+      `${prefix}stopprotection - Stop current protection task`,
+      `${prefix}status - Show bot status`,
+      `${prefix}come - Bot comes to you`,
+      `${prefix}look [player/coordinates] - Look at target`,
+      `${prefix}stop - Stop current task`
+    ];
+    
+    // Send in batches to avoid chat rate limiting
+    this.chat(`=== ProtectorBot Commands ===`);
+    
+    // Send messages with slight delay to avoid chat rate limiting
+    let i = 0;
+    const sendNextMessage = () => {
+      if (i < helpMessages.length) {
+        this.chat(helpMessages[i]);
+        i++;
+        setTimeout(sendNextMessage, 500);
+      }
+    };
+    
+    sendNextMessage();
   }
 }
 

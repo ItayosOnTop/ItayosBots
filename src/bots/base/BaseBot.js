@@ -15,6 +15,7 @@ const collectBlock = require('mineflayer-collectblock').plugin;
 const armorManager = require('mineflayer-armor-manager');
 const toolPlugin = require('mineflayer-tool').plugin;
 const totemPlugin = require('mineflayer-totem-auto');
+const Vec3 = require('vec3').Vec3;
 
 const mainConfig = require('../../../config');
 const EventEmitter = require('events');
@@ -90,6 +91,44 @@ class BaseBot extends EventEmitter {
       return true;
     } catch (error) {
       this._handleError('Failed to start bot', error);
+      return false;
+    }
+  }
+  
+  /**
+   * Make the bot look at a specific position or entity
+   * @param {Object|Entity} target - Target position or entity to look at 
+   * @returns {Promise<boolean>} - Whether the look operation was successful
+   */
+  async lookAt(target) {
+    if (!this.bot || !this.active) {
+      throw new Error('Bot is not active');
+    }
+    
+    try {
+      let position;
+      
+      if (target.position) {
+        // Target is an entity with a position property
+        position = target.position;
+      } else if (target.x !== undefined && target.y !== undefined && target.z !== undefined) {
+        // Target is a position object with x, y, z coordinates
+        position = target;
+      } else {
+        throw new Error('Invalid target to look at');
+      }
+      
+      // Create Vec3 from position if needed
+      if (!(position instanceof Vec3)) {
+        position = new Vec3(position.x, position.y, position.z);
+      }
+      
+      // Look at position
+      await this.bot.lookAt(position);
+      this.log.info(`Looking at ${position.x.toFixed(1)}, ${position.y.toFixed(1)}, ${position.z.toFixed(1)}`);
+      return true;
+    } catch (error) {
+      this._handleError('Failed to look at target', error);
       return false;
     }
   }
@@ -293,7 +332,19 @@ class BaseBot extends EventEmitter {
       this.log.info(`Chat from ${username}: ${message}`);
       this.emit('chat', { username, message });
       
-      // Command handling will be implemented later
+      // Look at player who sent the message
+      this._lookAtPlayerWhoSentMessage(username);
+      
+      // Check if the message is directed to this bot (contains the bot's name)
+      if (message.toLowerCase().includes(this.username.toLowerCase())) {
+        this.chat(`I'm here, ${username}! Type ${mainConfig.system.commandPrefix}help for commands.`);
+      }
+      
+      // Process commands if they start with the prefix
+      const prefix = mainConfig.system.commandPrefix;
+      if (message.startsWith(prefix)) {
+        this._handleCommand(username, message.slice(prefix.length));
+      }
     });
     
     // Handle server connection events
@@ -326,6 +377,176 @@ class BaseBot extends EventEmitter {
         this.log.debug(`Inventory update: ${oldItem?.name || 'empty'} -> ${newItem?.name || 'empty'}`);
       }
     });
+  }
+
+  /**
+   * Look at player who sent a message
+   * @private
+   * @param {string} username - Username of the player
+   */
+  async _lookAtPlayerWhoSentMessage(username) {
+    if (!this.bot || !this.active) return;
+    
+    try {
+      const player = this.bot.players[username];
+      if (player && player.entity) {
+        await this.lookAt(player.entity);
+      }
+    } catch (error) {
+      // Silently handle error, looking at players is a nice-to-have
+      this.log.debug(`Could not look at player ${username}: ${error.message}`);
+    }
+  }
+
+  /**
+   * Handle a command sent by a player
+   * @private
+   * @param {string} username - Username of the player who sent the command
+   * @param {string} commandString - Command string (without prefix)
+   */
+  _handleCommand(username, commandString) {
+    // Base implementation - subclasses will override with specific command handling
+    const args = commandString.trim().split(/\s+/);
+    const command = args.shift().toLowerCase();
+    
+    this.log.info(`Command received from ${username}: ${command} ${args.join(' ')}`);
+    
+    // Check if the bot-specific command handler exists
+    if (typeof this.handleCommand === 'function') {
+      this.handleCommand(username, command, args);
+    } else {
+      // Basic commands all bots should respond to
+      switch (command) {
+        case 'status':
+          this._respondWithStatus(username);
+          break;
+        case 'come':
+          this._goToPlayer(username);
+          break;
+        case 'stop':
+          this._stopCurrentTask(username);
+          break;
+        case 'look':
+          this._handleLookCommand(username, args);
+          break;
+        default:
+          // Unknown command for base bot
+          if (username === this.bot.players[username]?.username) {
+            this.chat(`I don't understand that command. Try ${mainConfig.system.commandPrefix}help`);
+          }
+      }
+    }
+  }
+
+  /**
+   * Handle the look command
+   * @private
+   * @param {string} username - Username of the player who sent the command
+   * @param {Array<string>} args - Command arguments
+   */
+  async _handleLookCommand(username, args) {
+    if (args.length === 0) {
+      // Look at the player who sent the command
+      const player = this.bot.players[username];
+      if (player && player.entity) {
+        await this.lookAt(player.entity);
+        this.chat(`Looking at you, ${username}!`);
+      } else {
+        this.chat(`I can't see you, ${username}.`);
+      }
+    } else if (args.length === 3) {
+      // Look at specific coordinates
+      try {
+        const x = parseFloat(args[0]);
+        const y = parseFloat(args[1]);
+        const z = parseFloat(args[2]);
+        
+        if (isNaN(x) || isNaN(y) || isNaN(z)) {
+          this.chat('Invalid coordinates. Usage: look <x> <y> <z>');
+          return;
+        }
+        
+        await this.lookAt({ x, y, z });
+        this.chat(`Looking at coordinates (${x}, ${y}, ${z})`);
+      } catch (error) {
+        this.chat(`Error looking at coordinates: ${error.message}`);
+      }
+    } else if (args.length === 1) {
+      // Look at another player
+      const targetUsername = args[0];
+      const targetPlayer = this.bot.players[targetUsername];
+      
+      if (targetPlayer && targetPlayer.entity) {
+        await this.lookAt(targetPlayer.entity);
+        this.chat(`Looking at ${targetUsername}.`);
+      } else {
+        this.chat(`I can't see ${targetUsername}.`);
+      }
+    } else {
+      this.chat('Usage: look [player] or look <x> <y> <z>');
+    }
+  }
+
+  /**
+   * Go to a player
+   * @private
+   * @param {string} username - Username of the player
+   */
+  async _goToPlayer(username) {
+    try {
+      const player = this.bot.players[username];
+      if (!player || !player.entity) {
+        this.chat(`I can't see you, ${username}.`);
+        return;
+      }
+      
+      this.chat(`Coming to you, ${username}!`);
+      await this.goTo(player.entity.position, 2);
+      this.chat(`I've arrived, ${username}!`);
+    } catch (error) {
+      this.chat(`Error coming to you: ${error.message}`);
+    }
+  }
+
+  /**
+   * Stop current task
+   * @private
+   * @param {string} username - Username of the player
+   */
+  _stopCurrentTask(username) {
+    if (this.currentTask) {
+      const previousTask = this.currentTask;
+      
+      if (this.bot.pathfinder.isMoving()) {
+        this.bot.pathfinder.stop();
+      }
+      
+      this.currentTask = null;
+      this.chat(`Stopped task: ${previousTask}`);
+    } else {
+      this.chat('I\'m not doing anything right now.');
+    }
+  }
+
+  /**
+   * Send status information to player
+   * @private
+   * @param {string} username - Username of the player
+   */
+  _respondWithStatus(username) {
+    const status = this.getStatus();
+    const position = status.position;
+    
+    let statusText = `Status: ${status.status}`;
+    if (status.currentTask) statusText += `, Task: ${status.currentTask}`;
+    
+    if (position) {
+      statusText += `, Position: ${Math.floor(position.x)}, ${Math.floor(position.y)}, ${Math.floor(position.z)}`;
+    }
+    
+    statusText += `, Health: ${status.health}/20, Food: ${status.food}/20`;
+    
+    this.chat(statusText);
   }
   
   /**
