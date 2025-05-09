@@ -4,6 +4,8 @@
  * This file contains the implementation of global commands available to all bot types.
  */
 
+const mainConfig = require('../../config');
+
 /**
  * Create global commands
  * @param {Object} dependencies - System dependencies
@@ -15,7 +17,7 @@ function createGlobalCommands({ botManager, commandParser }) {
   commandParser.registerCommand({
     name: 'help',
     description: 'Display help information',
-    usage: '#help [botName] [command]',
+    usage: '$help [botName] [command]',
     group: 'global',
     execute: async ({ args, platform }) => {
       if (args.length === 0) {
@@ -69,7 +71,7 @@ function createGlobalCommands({ botManager, commandParser }) {
   commandParser.registerCommand({
     name: 'list',
     description: 'List all active bots and their status',
-    usage: '#list [type]',
+    usage: '$list [type]',
     group: 'global',
     platforms: ['discord'], // Only available on Discord
     execute: async ({ args }) => {
@@ -93,7 +95,7 @@ function createGlobalCommands({ botManager, commandParser }) {
   commandParser.registerCommand({
     name: 'stop',
     description: 'Stop all bots or a specific bot',
-    usage: '#stop [botName]',
+    usage: '$stop [botName]',
     group: 'global',
     execute: async ({ args }) => {
       const botName = args[0];
@@ -125,11 +127,11 @@ function createGlobalCommands({ botManager, commandParser }) {
   commandParser.registerCommand({
     name: 'goto',
     description: 'Command bot(s) to move to coordinates or a block type',
-    usage: '#goto <botName> [x] [y] [z] or #goto <botName> <blockName>',
+    usage: '$goto <botName> [x] [y] [z] or $goto <botName> <blockName>',
     group: 'global',
     execute: async ({ args }) => {
       if (args.length < 2) {
-        throw new Error('Not enough arguments. Usage: #goto <botName> [x] [y] [z] or #goto <botName> <blockName>');
+        throw new Error('Not enough arguments. Usage: $goto <botName> [x] [y] [z] or $goto <botName> <blockName>');
       }
       
       const botName = args[0];
@@ -194,11 +196,11 @@ function createGlobalCommands({ botManager, commandParser }) {
   commandParser.registerCommand({
     name: 'come',
     description: 'Command bot(s) to come to your location',
-    usage: '#come <botName>',
+    usage: '$come <botName>',
     group: 'global',
     execute: async ({ args, sender, platform, context }) => {
       if (args.length < 1) {
-        throw new Error('Not enough arguments. Usage: #come <botName>');
+        throw new Error('Not enough arguments. Usage: $come <botName>');
       }
       
       const botName = args[0];
@@ -243,7 +245,7 @@ function createGlobalCommands({ botManager, commandParser }) {
   commandParser.registerCommand({
     name: 'status',
     description: 'Get detailed status report of bot(s)',
-    usage: '#status [botName]',
+    usage: '$status [botName]',
     group: 'global',
     platforms: ['discord'], // Only available on Discord
     execute: async ({ args }) => {
@@ -277,24 +279,43 @@ function createGlobalCommands({ botManager, commandParser }) {
   commandParser.registerCommand({
     name: 'login',
     description: 'Create and connect a bot',
-    usage: '#login <botName> <botType> [serverIP] [port]',
+    usage: '$login <botName> <botType>',
     group: 'management',
     execute: async ({ args }) => {
       if (args.length < 2) {
-        throw new Error('Not enough arguments. Usage: #login <botName> <botType> [serverIP] [port]');
+        throw new Error('Not enough arguments. Usage: $login <botName> <botType>');
       }
       
       const botName = args[0];
-      const botType = args[1].toLowerCase();
-      const serverIP = args[2] || undefined;
-      const port = args[3] ? parseInt(args[3]) : undefined;
+      let botType = args[1].toLowerCase();
+      const serverIP = mainConfig.server.host; // Use config value
+      const port = mainConfig.server.port; // Use config value
+      
+      // Support shorthand bot types
+      switch (botType) {
+        case 'p':
+        case 'protector':
+          botType = 'protector';
+          break;
+        case 'm':
+        case 'miner':
+          botType = 'miner';
+          break;
+        case 'b':
+        case 'builder':
+          botType = 'builder';
+          break;
+        default:
+          throw new Error(`Unknown bot type: ${botType}. Valid types: protector/p, miner/m, builder/b`);
+      }
       
       const bot = await botManager.createBot({
         username: botName,
         type: botType,
         server: {
           host: serverIP,
-          port: port
+          port: port,
+          version: mainConfig.server.version // Always use version from config
         }
       });
       
@@ -314,17 +335,35 @@ function createGlobalCommands({ botManager, commandParser }) {
   commandParser.registerCommand({
     name: 'loginMultiple',
     description: 'Create and connect multiple bots defined in a file',
-    usage: '#loginMultiple <fileName> <botType> [serverIP] [port]',
+    usage: '$loginMultiple <fileName> <botType>',
     group: 'management',
     execute: async ({ args }) => {
       if (args.length < 2) {
-        throw new Error('Not enough arguments. Usage: #loginMultiple <fileName> <botType> [serverIP] [port]');
+        throw new Error('Not enough arguments. Usage: $loginMultiple <fileName> <botType>');
       }
       
       const fileName = args[0];
-      const botType = args[1].toLowerCase();
-      const serverIP = args[2] || undefined;
-      const port = args[3] ? parseInt(args[3]) : undefined;
+      let botType = args[1].toLowerCase();
+      const serverIP = mainConfig.server.host; // Use config value
+      const port = mainConfig.server.port; // Use config value
+      
+      // Support shorthand bot types
+      switch (botType) {
+        case 'p':
+        case 'protector':
+          botType = 'protector';
+          break;
+        case 'm':
+        case 'miner':
+          botType = 'miner';
+          break;
+        case 'b':
+        case 'builder':
+          botType = 'builder';
+          break;
+        default:
+          throw new Error(`Unknown bot type: ${botType}. Valid types: protector/p, miner/m, builder/b`);
+      }
       
       const fs = require('fs-extra');
       
@@ -344,7 +383,8 @@ function createGlobalCommands({ botManager, commandParser }) {
             type: botType,
             server: {
               host: serverIP,
-              port: port
+              port: port,
+              version: mainConfig.server.version // Always use version from config
             }
           });
           
@@ -369,7 +409,7 @@ function createGlobalCommands({ botManager, commandParser }) {
   commandParser.registerCommand({
     name: 'refreshcommands',
     description: 'Refresh Discord slash commands registration',
-    usage: '#refreshcommands',
+    usage: '$refreshcommands',
     platforms: ['minecraft', 'discord'],
     group: 'system',
     execute: async ({ context, platform }) => {
@@ -384,36 +424,26 @@ function createGlobalCommands({ botManager, commandParser }) {
       }
       
       try {
-        console.log('Manually refreshing Discord slash commands...');
+        console.log('Manually refreshing Discord commands...');
         
         // Access the Discord bot through the context
         const discordBot = context.discord;
         
-        // Get the command parser from the application
-        const commandParser = require('./index').commandParser;
-        
-        if (!commandParser) {
-          return {
-            success: false,
-            error: 'Command parser not found'
-          };
-        }
-        
         // Force refresh the commands
-        const success = await discordBot.registerSlashCommands(commandParser);
+        const success = await discordBot.registerSlashCommands(null);
         
         if (success) {
           return {
             success: true,
             result: {
               type: 'text',
-              data: 'Discord slash commands have been refreshed successfully. They should appear within a few minutes.'
+              data: 'Discord commands have been refreshed successfully. Now using prefix commands with $ instead of slash commands.'
             }
           };
         } else {
           return {
             success: false,
-            error: 'Failed to refresh Discord slash commands. Check console for errors.'
+            error: 'Failed to refresh Discord commands. Check console for errors.'
           };
         }
       } catch (error) {

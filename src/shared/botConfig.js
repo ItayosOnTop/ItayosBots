@@ -58,11 +58,18 @@ function loadBotConfig(botType) {
     throw new Error(`No configuration template found for bot type: ${botType}`);
   }
   
+  // Get bot type specific config if it exists
+  const botTypeConfig = mainConfig.botTypes && mainConfig.botTypes[botType] 
+    ? mainConfig.botTypes[botType] 
+    : {};
+  
   // Merge with global settings
   return {
     ...mainConfig.bots.defaults,
     ...botTemplates[botType],
-    ...mainConfig.botTypes[botType]
+    ...botTypeConfig,
+    // Add server config for easy access
+    server: mainConfig.server
   };
 }
 

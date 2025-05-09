@@ -6,6 +6,7 @@
 
 const { Client, IntentsBitField, EmbedBuilder, REST, Routes, ApplicationCommandOptionType } = require('discord.js');
 const { discordConfig, embedTemplates } = require('./discordConfig');
+const mainConfig = require('../../config');
 
 class DiscordBot {
   /**
@@ -23,10 +24,12 @@ class DiscordBot {
     this.channelId = discordConfig.channelId;
     this.commands = new Map();
     this.commandData = [];
+    this.prefix = mainConfig.system.commandPrefix;
     
     // Bind methods
     this._onReady = this._onReady.bind(this);
     this._onInteraction = this._onInteraction.bind(this);
+    this._onMessage = this._onMessage.bind(this);
     this._handleBotEvents = this._handleBotEvents.bind(this);
   }
   
@@ -52,7 +55,7 @@ class DiscordBot {
       
       // Set up event handlers
       this.client.on('ready', this._onReady);
-      this.client.on('interactionCreate', this._onInteraction);
+      this.client.on('messageCreate', this._onMessage);
       
       // Set up bot event handlers
       this._handleBotEvents();
@@ -69,223 +72,95 @@ class DiscordBot {
   
   /**
    * Register slash commands from the command parser
+   * This is disabled as we're using prefix commands now
    * @param {Object} commandParser - The command parser instance
    */
   async registerSlashCommands(commandParser) {
-    if (!this.client) return false;
+    console.log('Slash commands are disabled. Using prefix commands instead.');
+    return true;
+  }
+  
+  /**
+   * Handle incoming Discord messages
+   * @private
+   * @param {Message} message - Discord message
+   */
+  async _onMessage(message) {
+    // Ignore messages from bots to prevent loops
+    if (message.author.bot) return;
+    
+    // Only process messages in the designated channel if one is set
+    if (this.channelId && message.channelId !== this.channelId) return;
+    
+    // Check if message starts with the command prefix
+    if (!message.content.startsWith(this.prefix)) return;
     
     try {
-      const allCommands = commandParser.getCommands();
-      const slashCommands = [];
-      
-      console.log('Available command categories:', Object.keys(allCommands));
-      
-      // Convert commands to Discord slash command format
-      Object.entries(allCommands).forEach(([category, commands]) => {
-        console.log(`Processing category: ${category}, with ${commands.length} commands`);
-        
-        commands.forEach(cmd => {
-          console.log(`Processing command: ${cmd.name}`);
-          
-          // Only include commands that are available on Discord
-          const fullCmd = commandParser.commands.get(cmd.name);
-          if (!fullCmd) {
-            console.log(`Command ${cmd.name} not found in command parser`);
-            return;
-          }
-          
-          if (!fullCmd.platforms.includes('discord')) {
-            console.log(`Command ${cmd.name} not available on Discord, skipping`);
-            return;
-          }
-          
-          // Sanitize command name for Discord's requirements
-          const sanitizedName = this._sanitizeCommandName(cmd.name);
-          console.log(`Sanitized command name: ${sanitizedName}`);
-          
-          // Create slash command data
-          const slashCmd = {
-            name: sanitizedName,
-            description: cmd.description?.substring(0, 100) || 'No description',
-            options: this._generateCommandOptions(fullCmd)
-          };
-          
-          console.log(`Generated options for ${sanitizedName}:`, slashCmd.options.length);
-          
-          slashCommands.push(slashCmd);
-          this.commands.set(sanitizedName, fullCmd);
-        });
+      // Process the command
+      const result = await this.handleCommand({
+        message: message.content,
+        platform: 'discord',
+        sender: message.author.id,
+        context: { message, discord: this }
       });
       
-      this.commandData = slashCommands;
-      
-      console.log(`Registering ${slashCommands.length} slash commands:`, 
-        slashCommands.map(cmd => cmd.name).join(', '));
-      
-      if (slashCommands.length === 0) {
-        console.warn('No slash commands to register. Check command configuration.');
-        return false;
+      // Handle command result
+      if (!result || !result.success) {
+        await message.reply(result?.error || 'An error occurred executing the command');
+        return;
       }
       
-      // Register commands with Discord API
-      const rest = new REST({ version: '10' }).setToken(discordConfig.token);
+      if (!result.result) {
+        await message.reply('Command executed successfully');
+        return;
+      }
       
-      console.log('Started refreshing application (/) commands.');
+      const { type, data } = result.result;
       
-      try {
-        // Check if we have a guild ID for faster development updates
-        if (discordConfig.guildId) {
-          console.log(`Using guild-specific command registration for guild ID: ${discordConfig.guildId}`);
-          await rest.put(
-            Routes.applicationGuildCommands(this.client.user.id, discordConfig.guildId),
-            { body: slashCommands },
-          );
-          console.log(`Registered ${slashCommands.length} commands to specific guild`);
-        } else {
-          // Global command registration (can take up to an hour to propagate)
-          console.log('Using global command registration (may take up to an hour to update)');
-          await rest.put(
-            Routes.applicationCommands(this.client.user.id),
-            { body: slashCommands },
-          );
-          console.log(`Registered ${slashCommands.length} commands globally`);
-        }
-        
-        console.log('Successfully reloaded application (/) commands.');
-        return true;
-      } catch (error) {
-        console.error('Error during API call to register commands:', error);
-        
-        // More detailed error information
-        if (error.rawError) {
-          console.error('Raw error details:', JSON.stringify(error.rawError, null, 2));
-        }
-        
-        return false;
+      switch (type) {
+        case 'text':
+          await message.reply(data);
+          break;
+          
+        case 'status':
+          if (typeof data === 'string') {
+            // Single bot status
+            await this.sendBotStatus(data);
+            await message.reply(`Status for ${data} has been posted in the channel`);
+          } else {
+            // Multiple bot status or detailed status
+            const embed = this._generateStatusEmbed(data);
+            await message.reply({ embeds: [embed] });
+          }
+          break;
+          
+        case 'list':
+          const listEmbed = embedTemplates.botList(data);
+          await message.reply({ embeds: [listEmbed] });
+          break;
+          
+        case 'help':
+          if (typeof data === 'string') {
+            // Help for specific command or bot
+            const helpEmbed = data.startsWith('bot:') 
+              ? embedTemplates.botHelp(data.substring(4))
+              : embedTemplates.commandHelp(data);
+            await message.reply({ embeds: [helpEmbed] });
+          } else {
+            // General help
+            const helpEmbed = embedTemplates.help(data);
+            await message.reply({ embeds: [helpEmbed] });
+          }
+          break;
+          
+        default:
+          // Default success message
+          await message.reply('Command executed successfully');
       }
     } catch (error) {
-      console.error('Error registering slash commands:', error);
-      return false;
+      console.error('Error handling message:', error);
+      await message.reply(`Error executing command: ${error.message}`);
     }
-  }
-  
-  /**
-   * Sanitize command name for Discord slash command requirements
-   * @private
-   * @param {string} name - Original command name
-   * @returns {string} - Sanitized command name
-   */
-  _sanitizeCommandName(name) {
-    // Remove any special characters except hyphens and underscores
-    // Convert to lowercase and ensure it's 1-32 characters
-    let sanitized = name.toLowerCase()
-                       .replace(/[^a-z0-9\-_]/g, '')
-                       .substring(0, 32);
-    
-    // Ensure it's not empty
-    if (!sanitized) {
-      sanitized = 'command';
-    }
-    
-    return sanitized;
-  }
-  
-  /**
-   * Generate command options based on command usage
-   * @private
-   * @param {Object} command - Command object
-   * @returns {Array} - Array of command options
-   */
-  _generateCommandOptions(command) {
-    // Default options that most commands will need
-    const options = [];
-    const paramNames = new Set(); // Track used parameter names
-    
-    // Extract parameters from usage string
-    // Match both <required> and [optional] parameters
-    // Example: #goto <bot_name> [x] [y] [z] or #login <botName> <botType> [serverIP] [port]
-    const usageMatch = command.usage.match(/[<\[]([^\]>]+)[>\]]/g);
-    
-    if (!usageMatch) return options;
-    
-    // Process required parameters first, then optional ones
-    const requiredParams = [];
-    const optionalParams = [];
-    
-    usageMatch.forEach((param) => {
-      if (param.startsWith('<')) {
-        requiredParams.push(param);
-      } else {
-        optionalParams.push(param);
-      }
-    });
-    
-    // Process all parameters in correct order (required first, then optional)
-    const orderedParams = [...requiredParams, ...optionalParams];
-    
-    orderedParams.forEach((param) => {
-      // Remove brackets/angles and get clean parameter name
-      let paramName = param.replace(/[<\[\]>]/g, '').toLowerCase();
-      
-      // Skip adding bot_name for commands that apply to all bots
-      if (paramName === 'bot_name' && command.name === 'list') return;
-      
-      // Ensure parameter names follow Discord requirements
-      paramName = paramName.replace(/[^a-z0-9\-_]/g, '');
-      
-      // Handle duplicate parameter names
-      if (paramNames.has(paramName)) {
-        let counter = 1;
-        let newName = `${paramName}${counter}`;
-        while (paramNames.has(newName)) {
-          counter++;
-          newName = `${paramName}${counter}`;
-        }
-        paramName = newName;
-      }
-      
-      paramNames.add(paramName);
-      
-      // Determine if parameter is required based on bracket type (< > = required, [ ] = optional)
-      const isRequired = param.startsWith('<');
-      
-      let option = {
-        name: paramName,
-        description: `The ${param.replace(/[<\[\]>]/g, '').replace('_', ' ')} parameter`,
-        required: isRequired,
-        type: ApplicationCommandOptionType.String
-      };
-      
-      // Determine option type based on parameter name
-      if (paramName.match(/^[xyz]$/)) {
-        option.type = ApplicationCommandOptionType.Number;
-        option.description = `The ${paramName.toUpperCase()} coordinate`;
-      } else if (paramName === 'amount' || paramName === 'port') {
-        option.type = ApplicationCommandOptionType.Integer;
-        if (paramName === 'port') {
-          option.description = 'The Minecraft server port';
-        }
-      } else if (paramName.includes('blockname') || paramName.includes('itemname')) {
-        option.description = `The name of the ${paramName.includes('block') ? 'block' : 'item'}`;
-      } else if (paramName.includes('playername')) {
-        option.description = 'The name of the player';
-      } else if (paramName.includes('filename')) {
-        option.description = 'The name of the file';
-      } else if (paramName === 'botname') {
-        option.description = 'The name for the bot';
-      } else if (paramName === 'bottype') {
-        option.description = 'The type of bot (minerbot, builderbot, protectorbot)';
-      } else if (paramName === 'serverip') {
-        option.description = 'The Minecraft server IP address';
-      }
-      
-      // Truncate description to Discord's maximum length
-      option.description = option.description.substring(0, 100);
-      
-      options.push(option);
-    });
-    
-    return options;
   }
   
   /**

@@ -6,7 +6,7 @@
  */
 
 const BaseBot = require('../base');
-const { botConfig } = require('../../shared/botConfig');
+const botConfig = require('../../shared/botConfig');
 const { Vec3 } = require('vec3');
 
 class ProtectorBot extends BaseBot {
@@ -25,7 +25,7 @@ class ProtectorBot extends BaseBot {
     
     // Protection state
     this.protectionTarget = null;    // Entity or position being protected
-    this.protectionRadius = this.config.botTypes?.protector?.protectionRadius || 50;
+    this.protectionRadius = this.config.protectionRadius || 50;
     this.patrolPoints = [];          // Points to patrol between
     this.currentPatrolIndex = 0;     // Current patrol point index
     this.patrolling = false;         // Whether bot is currently patrolling
@@ -33,8 +33,8 @@ class ProtectorBot extends BaseBot {
     this.whitelist = [];             // Entities that should not be attacked
     
     // Combat state
-    this.aggressionLevel = this.config.botTypes?.protector?.aggressionLevel || 'high';
-    this.retreatHealthThreshold = this.config.botTypes?.protector?.retreatHealthThreshold || 7;
+    this.aggressionLevel = this.config.aggressionLevel || 'high';
+    this.retreatHealthThreshold = this.config.retreatHealthThreshold || 7;
     this.targetEntity = null;        // Current combat target
     
     // Bind methods

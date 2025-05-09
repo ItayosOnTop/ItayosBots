@@ -14,12 +14,12 @@ function createProtectorCommands({ botManager, commandParser }) {
   // Guard command
   commandParser.registerCommand({
     name: 'guard',
-    description: 'Guard specified player or coordinate location',
-    usage: '#guard <botName> <playerName> or #guard <botName> <x> <y> <z> [radius]',
+    description: 'Command a protector bot to guard a player or location',
+    usage: '$guard <botName> <playerName> or $guard <botName> <x> <y> <z> [radius]',
     group: 'protector',
     execute: async ({ args, sender, platform }) => {
       if (args.length < 2) {
-        throw new Error('Not enough arguments. Usage: #guard <botName> <playerName> or #guard <botName> <x> <y> <z> [radius]');
+        throw new Error('Not enough arguments. Usage: $guard <botName> <playerName> or $guard <botName> <x> <y> <z> [radius]');
       }
       
       const botName = args[0];
@@ -83,12 +83,12 @@ function createProtectorCommands({ botManager, commandParser }) {
   // Patrol command
   commandParser.registerCommand({
     name: 'patrol',
-    description: 'Patrol within specified area boundaries',
-    usage: '#patrol <botName> <x1> <y1> <z1> <x2> <y2> <z2> [checkRadius]',
+    description: 'Command a protector bot to patrol between two points',
+    usage: '$patrol <botName> <x1> <y1> <z1> <x2> <y2> <z2> [checkRadius]',
     group: 'protector',
     execute: async ({ args }) => {
       if (args.length < 7) {
-        throw new Error('Not enough arguments. Usage: #patrol <botName> <x1> <y1> <z1> <x2> <y2> <z2> [checkRadius]');
+        throw new Error('Not enough arguments. Usage: $patrol <botName> <x1> <y1> <z1> <x2> <y2> <z2> [checkRadius]');
       }
       
       const botName = args[0];
@@ -145,12 +145,12 @@ function createProtectorCommands({ botManager, commandParser }) {
   // Follow command
   commandParser.registerCommand({
     name: 'follow',
-    description: 'Follow specified player or entity type',
-    usage: '#follow <botName> <playerName> [distance]',
+    description: 'Command a protector bot to follow a player',
+    usage: '$follow <botName> <playerName> [distance]',
     group: 'protector',
     execute: async ({ args, sender, platform }) => {
       if (args.length < 2) {
-        throw new Error('Not enough arguments. Usage: #follow <botName> <playerName> [distance]');
+        throw new Error('Not enough arguments. Usage: $follow <botName> <playerName> [distance]');
       }
       
       const botName = args[0];
@@ -189,12 +189,12 @@ function createProtectorCommands({ botManager, commandParser }) {
   // Whitelist command
   commandParser.registerCommand({
     name: 'whitelist',
-    description: 'Add player to protection whitelist (will not attack)',
-    usage: '#whitelist <botName> add/remove <playerName>',
+    description: 'Add or remove a player from a protector bot\'s whitelist',
+    usage: '$whitelist <botName> add/remove <playerName>',
     group: 'protector',
     execute: async ({ args }) => {
       if (args.length < 3) {
-        throw new Error('Not enough arguments. Usage: #whitelist <botName> add/remove <playerName>');
+        throw new Error('Not enough arguments. Usage: $whitelist <botName> add/remove <playerName>');
       }
       
       const botName = args[0];
@@ -246,13 +246,13 @@ function createProtectorCommands({ botManager, commandParser }) {
   // Aggression command
   commandParser.registerCommand({
     name: 'aggression',
-    description: 'Set aggression level for a protector bot',
-    usage: '#aggression <botName> <level>',
+    description: 'Set the aggression level of a protector bot',
+    usage: '$aggression <botName> <level>',
     aliases: ['aggro'],
     group: 'protector',
     execute: async ({ args }) => {
       if (args.length < 2) {
-        throw new Error('Not enough arguments. Usage: #aggression <botName> <level>');
+        throw new Error('Not enough arguments. Usage: $aggression <botName> <level>');
       }
       
       const botName = args[0];
@@ -286,16 +286,16 @@ function createProtectorCommands({ botManager, commandParser }) {
     }
   });
   
-  // Stop protection command
+  // StopProtection command
   commandParser.registerCommand({
     name: 'stopProtection',
-    description: 'Stop all protection tasks',
-    usage: '#stopProtection <botName>',
+    description: 'Stop all protection activities of a protector bot',
+    usage: '$stopProtection <botName>',
     aliases: ['stopProtect'],
     group: 'protector',
     execute: async ({ args }) => {
       if (args.length < 1) {
-        throw new Error('Not enough arguments. Usage: #stopProtection <botName>');
+        throw new Error('Not enough arguments. Usage: $stopProtection <botName>');
       }
       
       const botName = args[0];
