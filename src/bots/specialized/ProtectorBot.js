@@ -9,6 +9,7 @@ const BaseBot = require('../base');
 const botConfig = require('../../shared/botConfig');
 const mainConfig = require('../../../config');
 const { Vec3 } = require('vec3');
+const { pathfinder, Movements, goals } = require('mineflayer-pathfinder');
 
 class ProtectorBot extends BaseBot {
   /**
@@ -82,14 +83,11 @@ class ProtectorBot extends BaseBot {
     }
     
     try {
-      // Find player entity
+      // Find player entity - but don't require it to be visible right away
       const player = this.bot.players[playerName];
       
-      if (!player || !player.entity) {
-        throw new Error(`Player ${playerName} not found or not in range`);
-      }
-      
-      // Stop any current protection tasks
+      // Instead of requiring player entity immediately, set up guard state
+      // even if player is not currently visible
       this._stopProtectionTasks();
       
       // Set up player guarding
@@ -101,12 +99,27 @@ class ProtectorBot extends BaseBot {
       this.currentTask = `Guarding player ${playerName}`;
       this.log.info(this.currentTask);
       
-      // Start guard tick
-      this.guardTickInterval = setInterval(this._guardTick, 1000);
+      // Start guard tick with a safe interval (clear any existing one first)
+      if (this.guardTickInterval) {
+        clearInterval(this.guardTickInterval);
+        this.guardTickInterval = null;
+      }
+      
+      // Use a reasonable interval that won't overwhelm the server
+      this.guardTickInterval = setInterval(() => {
+        // Wrap in try/catch to prevent interval from breaking
+        try {
+          this._guardTick().catch(error => {
+            this.log.warn(`Error in guard tick: ${error.message}`);
+          });
+        } catch (error) {
+          this.log.warn(`Error executing guard tick: ${error.message}`);
+        }
+      }, 1000);
       
       return true;
     } catch (error) {
-      this._handleError('Failed to guard player', error);
+      this.log.error(`Failed to guard player: ${error.message}`);
       return false;
     }
   }
@@ -145,11 +158,19 @@ class ProtectorBot extends BaseBot {
       await this.goTo(firstPoint);
       
       // Start patrol tick
-      this.patrolTickInterval = setInterval(this._patrolTick, 1000);
+      this.patrolTickInterval = setInterval(() => {
+        try {
+          this._patrolTick().catch(error => {
+            this.log.warn(`Error in patrol tick: ${error.message}`);
+          });
+        } catch (error) {
+          this.log.warn(`Error executing patrol tick: ${error.message}`);
+        }
+      }, 1000);
       
       return true;
     } catch (error) {
-      this._handleError('Failed to set up patrol', error);
+      this.log.error(`Failed to set up patrol: ${error.message}`);
       return false;
     }
   }
@@ -185,12 +206,19 @@ class ProtectorBot extends BaseBot {
       
       // Start protection check interval
       this.protectionInterval = setInterval(() => {
-        this._checkForThreats(this.protectionTarget.position, radius);
+        try {
+          this._checkForThreats(this.protectionTarget.position, radius)
+            .catch(error => {
+              this.log.warn(`Error checking for threats: ${error.message}`);
+            });
+        } catch (error) {
+          this.log.warn(`Error in threat check: ${error.message}`);
+        }
       }, 2000);
       
       return true;
     } catch (error) {
-      this._handleError('Failed to guard position', error);
+      this.log.error(`Failed to guard position: ${error.message}`);
       return false;
     }
   }
@@ -276,10 +304,10 @@ class ProtectorBot extends BaseBot {
       }
       
       // Check for hostile mobs
-      const entities = Object.values(this.bot.entities)
+      const entities = Object.values(this.bot.entities || {})
         .filter(entity => {
           // Filter by type
-          if (entity.type !== 'mob') {
+          if (!entity || entity.type !== 'mob') {
             return false;
           }
           
@@ -289,7 +317,7 @@ class ProtectorBot extends BaseBot {
           }
           
           // Check if entity is in range
-          return entity.position.distanceTo(position) <= radius;
+          return entity.position && entity.position.distanceTo(position) <= radius;
         })
         .sort((a, b) => 
           a.position.distanceTo(position) - b.position.distanceTo(position)
@@ -297,15 +325,16 @@ class ProtectorBot extends BaseBot {
       
       if (entities.length > 0) {
         // Attack nearest hostile entity
+        this.log.info(`Attacking hostile mob: ${entities[0].name || entities[0].displayName || 'unknown'}`);
         await this.attackEntity({ entity: entities[0], continuous: true });
       }
       
       // Check for hostile players based on aggression level
       if (this.aggressionLevel === 'high') {
-        const players = Object.values(this.bot.players)
+        const players = Object.values(this.bot.players || {})
           .filter(player => {
             // Skip if no entity
-            if (!player.entity) return false;
+            if (!player || !player.entity) return false;
             
             // Skip if whitelisted
             if (this.whitelist.includes(player.username)) return false;
@@ -313,20 +342,135 @@ class ProtectorBot extends BaseBot {
             // Skip if it's the guarded player
             if (this.guardingPlayer && player.username === this.guardingPlayer.name) return false;
             
+            // Skip if it's the bot itself
+            if (player.username === this.bot.username) return false;
+            
             // Check if player is in range
-            return player.entity.position.distanceTo(position) <= radius;
+            return player.entity.position && player.entity.position.distanceTo(position) <= radius;
           })
           .sort((a, b) => 
             a.entity.position.distanceTo(position) - b.entity.position.distanceTo(position)
           );
         
         if (players.length > 0) {
-          // Attack nearest non-whitelisted player
-          await this.attackEntity({ entity: players[0].entity, continuous: true });
+          // Only attack non-whitelisted players that are not being guarded
+          const targetPlayer = players[0];
+          
+          // Double-check this is not the guarded player
+          if (!this.guardingPlayer || targetPlayer.username !== this.guardingPlayer.name) {
+            this.log.info(`Attacking hostile player: ${targetPlayer.username}`);
+            await this.attackEntity({ entity: targetPlayer.entity, continuous: true });
+          }
         }
       }
     } catch (error) {
-      this._handleError('Error checking for threats', error);
+      this.log.warn(`Error checking for threats: ${error.message}`);
+    }
+  }
+  
+  /**
+   * Determine if a mob is hostile
+   * @private
+   * @param {Entity} entity - The entity to check
+   * @returns {boolean} - Whether the entity is hostile
+   */
+  _isHostileMob(entity) {
+    try {
+      if (!entity || !entity.name) return false;
+      
+      // List of known hostile mob types
+      const hostileMobs = [
+        'zombie', 'skeleton', 'creeper', 'spider', 'enderman', 
+        'witch', 'slime', 'phantom', 'drowned', 'piglin', 
+        'zombified_piglin', 'blaze', 'ghast', 'magma_cube', 
+        'hoglin', 'zoglin', 'warden', 'evoker', 'vindicator', 
+        'ravager', 'vex', 'shulker', 'stray', 'husk', 'wither'
+      ];
+      
+      // Check if entity is in hostile mob list
+      const mobName = entity.name.toLowerCase();
+      return hostileMobs.some(mobType => mobName.includes(mobType));
+    } catch (error) {
+      // If any error occurs, assume not hostile for safety
+      this.log.debug(`Error checking if mob is hostile: ${error.message}`);
+      return false;
+    }
+  }
+  
+  /**
+   * Attack an entity
+   * @param {Object} options - Attack options
+   * @param {Entity} options.entity - Entity to attack
+   * @param {boolean} options.continuous - Whether to continuously attack
+   * @returns {Promise<boolean>} - Whether attack was initiated
+   */
+  async attackEntity({ entity, continuous = false }) {
+    if (!this.bot || !this.active) {
+      return false;
+    }
+    
+    try {
+      // Double-check entity is valid
+      if (!entity || !entity.position) {
+        this.log.warn('Cannot attack: entity is invalid or has no position');
+        return false;
+      }
+      
+      // Don't attack if no PVP plugin or no entity
+      if (!this.bot.pvp) {
+        this.log.warn('PVP plugin not available');
+        return false;
+      }
+      
+      // Don't attack guarded player
+      if (this.guardingPlayer && entity.username === this.guardingPlayer.name) {
+        this.log.warn(`Refusing to attack guarded player: ${entity.username}`);
+        return false;
+      }
+      
+      // Don't attack whitelisted players
+      if (entity.username && this.whitelist.includes(entity.username)) {
+        this.log.warn(`Refusing to attack whitelisted player: ${entity.username}`);
+        return false;
+      }
+      
+      // Double-check we're not attacking ourselves
+      if (entity === this.bot.entity) {
+        this.log.warn('Refusing to attack self');
+        return false;
+      }
+      
+      // Equip best weapon
+      await this._equipBestWeapon();
+      
+      // Set target and attack
+      this.targetEntity = entity;
+      
+      if (continuous) {
+        try {
+          // Use PVP plugin's attack
+          await this.bot.pvp.attack(entity);
+        } catch (attackError) {
+          this.log.warn(`PVP attack error: ${attackError.message}`);
+          // Fall back to single attack if continuous fails
+          if (this.bot.attack) {
+            await this.bot.attack(entity);
+          }
+        }
+      } else {
+        // Single attack
+        if (this.bot.attack) {
+          await this.bot.attack(entity);
+        } else {
+          this.log.warn('Attack method not available');
+          return false;
+        }
+      }
+      
+      return true;
+    } catch (error) {
+      this.log.warn(`Failed to attack entity: ${error.message}`);
+      return false;
     }
   }
   
@@ -378,7 +522,8 @@ class ProtectorBot extends BaseBot {
       const player = this.bot.players[this.guardingPlayer.name];
       
       if (!player || !player.entity) {
-        this.log.warn(`Cannot find player ${this.guardingPlayer.name}`);
+        // Player not visible, just log and return - don't try to move
+        this.log.debug(`Player ${this.guardingPlayer.name} not visible, waiting`);
         return;
       }
       
@@ -386,17 +531,79 @@ class ProtectorBot extends BaseBot {
       const botPos = this.bot.entity.position;
       const followDist = this.guardingPlayer.followDistance;
       
-      // Check distance to player
-      if (botPos.distanceTo(playerPos) > followDist + 5) {
-        // Move closer to player
-        const targetPos = playerPos.clone();
-        await this.goTo({ x: targetPos.x, y: targetPos.y, z: targetPos.z }, followDist);
+      // Check for nearby hostile entities
+      const nearbyHostileFilter = entity => {
+        try {
+          // Skip invalid entities
+          if (!entity || !entity.position) return false;
+          
+          // Skip the guarded player
+          if (entity === player.entity) return false;
+          
+          // Skip the bot itself
+          if (entity === this.bot.entity) return false;
+          
+          // Check if hostile mob
+          const isHostileMob = entity.type === 'mob' && this._isHostileMob(entity);
+          
+          // Check if hostile player (not whitelisted and not the guarded player)
+          const isHostilePlayer = entity.type === 'player' && 
+                                entity.username && // Make sure username exists
+                                !this.whitelist.includes(entity.username) && 
+                                entity.username !== this.guardingPlayer.name &&
+                                entity.username !== this.bot.username;
+          
+          // Check if in range of the player
+          const isNearPlayer = entity.position.distanceTo(playerPos) < 16;
+          
+          return isNearPlayer && (isHostileMob || (isHostilePlayer && this.aggressionLevel === 'high'));
+        } catch (error) {
+          // If any error occurs in filtering, just skip this entity
+          this.log.debug(`Error filtering entity: ${error.message}`);
+          return false;
+        }
+      };
+      
+      // Find nearest hostile entity to the player
+      let hostileEntity = null;
+      try {
+        hostileEntity = this.bot.nearestEntity(nearbyHostileFilter);
+      } catch (error) {
+        this.log.warn(`Error finding nearest entity: ${error.message}`);
       }
       
-      // Check for threats around player
-      await this._checkForThreats(playerPos, 16);
+      if (hostileEntity) {
+        // Attack the hostile entity
+        this.log.info(`Protecting ${this.guardingPlayer.name} from ${hostileEntity.name || hostileEntity.username || 'hostile entity'}`);
+        await this.attackEntity({ entity: hostileEntity, continuous: true });
+      } else if (!this.targetEntity) {
+        // No threats, follow player if too far
+        if (botPos.distanceTo(playerPos) > followDist + 5) {
+          // Move closer to player
+          this.currentTask = `Following ${this.guardingPlayer.name}`;
+          try {
+            // Create pathfinding goal to follow the player
+            const goal = new goals.GoalFollow(player.entity, followDist);
+            this.bot.pathfinder.setGoal(goal, true);
+          } catch (error) {
+            this.log.warn(`Error setting follow goal: ${error.message}`);
+            // Fall back to regular goTo if GoalFollow fails
+            this.goTo(player.entity.position, followDist).catch(err => {
+              this.log.warn(`Fallback navigation error: ${err.message}`);
+            });
+          }
+        } else if (!this.bot.pathfinder.isMoving()) {
+          // Look at the player when nearby and not moving
+          try {
+            await this.lookAt(player.entity);
+          } catch (lookError) {
+            this.log.debug(`Error looking at player: ${lookError.message}`);
+          }
+        }
+      }
     } catch (error) {
-      this._handleError('Error in guard tick', error);
+      // Use simple log instead of _handleError
+      this.log.warn(`Error in guard tick: ${error.message}`);
     }
   }
   
@@ -405,29 +612,50 @@ class ProtectorBot extends BaseBot {
    * @private
    */
   _stopProtectionTasks() {
-    // Stop patrolling
-    this.patrolling = false;
-    this.patrolPoints = [];
-    this.currentPatrolIndex = 0;
-    
-    // Stop guarding player
-    this.guardingPlayer = null;
-    if (this.guardTickInterval) {
-      clearInterval(this.guardTickInterval);
-      this.guardTickInterval = null;
-    }
-    
-    // Stop position protection
-    this.protectionTarget = null;
-    if (this.protectionInterval) {
-      clearInterval(this.protectionInterval);
-      this.protectionInterval = null;
-    }
-    
-    // Stop any combat
-    if (this.targetEntity) {
-      this.stopAttacking();
-      this.targetEntity = null;
+    try {
+      // Stop patrolling
+      this.patrolling = false;
+      this.patrolPoints = [];
+      this.currentPatrolIndex = 0;
+      
+      // Stop guarding player
+      this.guardingPlayer = null;
+      
+      // Clear all intervals safely
+      if (this.guardTickInterval) {
+        clearInterval(this.guardTickInterval);
+        this.guardTickInterval = null;
+      }
+      
+      if (this.patrolTickInterval) {
+        clearInterval(this.patrolTickInterval);
+        this.patrolTickInterval = null;
+      }
+      
+      // Stop position protection
+      this.protectionTarget = null;
+      
+      if (this.protectionInterval) {
+        clearInterval(this.protectionInterval);
+        this.protectionInterval = null;
+      }
+      
+      // Stop any combat
+      if (this.targetEntity) {
+        this.stopAttacking();
+        this.targetEntity = null;
+      }
+      
+      // Stop any pathfinding
+      if (this.bot && this.bot.pathfinder) {
+        try {
+          this.bot.pathfinder.setGoal(null);
+        } catch (error) {
+          this.log.debug(`Error stopping pathfinder: ${error.message}`);
+        }
+      }
+    } catch (error) {
+      this.log.warn(`Error stopping protection tasks: ${error.message}`);
     }
   }
   
@@ -537,7 +765,61 @@ class ProtectorBot extends BaseBot {
       
       return true;
     } catch (error) {
-      this._handleError('Failed to equip gear', error);
+      this.log.error(`Failed to equip gear: ${error.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * Equip best available weapon
+   * @private
+   * @returns {Promise<boolean>} - Whether operation was successful
+   */
+  async _equipBestWeapon() {
+    try {
+      if (!this.bot || !this.bot.inventory) {
+        return false;
+      }
+      
+      // Weapon priority
+      const weaponPriority = [
+        'netherite_sword',
+        'diamond_sword',
+        'iron_sword',
+        'stone_sword',
+        'golden_sword',
+        'wooden_sword',
+        'netherite_axe',
+        'diamond_axe',
+        'iron_axe',
+        'stone_axe',
+        'golden_axe',
+        'wooden_axe'
+      ];
+      
+      // Find best weapon in inventory
+      let bestWeapon = null;
+      
+      for (const weaponName of weaponPriority) {
+        const weapon = this.bot.inventory.items().find(item => 
+          item.name === weaponName
+        );
+        
+        if (weapon) {
+          bestWeapon = weapon;
+          break;
+        }
+      }
+      
+      // Equip if found
+      if (bestWeapon) {
+        await this.bot.equip(bestWeapon, 'hand');
+        return true;
+      }
+      
+      return false;
+    } catch (error) {
+      this.log.warn(`Failed to equip best weapon: ${error.message}`);
       return false;
     }
   }
@@ -594,18 +876,12 @@ class ProtectorBot extends BaseBot {
       if (args.length === 0) {
         // Guard the player who sent the command
         this.chat(`Starting to guard you, ${username}.`);
-        const success = await this.guardPlayer({ playerName: username });
-        if (!success) {
-          this.chat(`Failed to guard you, ${username}.`);
-        }
+        await this.guardPlayer({ playerName: username });
       } else if (args.length === 1) {
         // Guard another player
         const targetPlayer = args[0];
         this.chat(`Starting to guard ${targetPlayer}.`);
-        const success = await this.guardPlayer({ playerName: targetPlayer });
-        if (!success) {
-          this.chat(`Failed to guard ${targetPlayer}.`);
-        }
+        await this.guardPlayer({ playerName: targetPlayer });
       } else if (args.length >= 3) {
         // Guard a position
         const x = parseInt(args[0]);
@@ -619,15 +895,13 @@ class ProtectorBot extends BaseBot {
         }
         
         this.chat(`Guarding position (${x}, ${y}, ${z}) with radius ${radius}.`);
-        const success = await this.guardPosition({ position: { x, y, z }, radius });
-        if (!success) {
-          this.chat(`Failed to guard position (${x}, ${y}, ${z}).`);
-        }
+        await this.guardPosition({ position: { x, y, z }, radius });
       } else {
         this.chat('Usage: guard [player] or guard <x> <y> <z> [radius]');
       }
     } catch (error) {
-      this.chat(`Error handling guard command: ${error.message}`);
+      this.log.error(`Error handling guard command: ${error.message}`);
+      this.chat(`Could not execute guard command: ${error.message}`);
     }
   }
 
@@ -666,12 +940,10 @@ class ProtectorBot extends BaseBot {
         { x: x2, y: y2, z: z1 }
       ];
       
-      const success = await this.patrol({ points, radius: checkRadius });
-      if (!success) {
-        this.chat('Failed to start patrol.');
-      }
+      await this.patrol({ points, radius: checkRadius });
     } catch (error) {
-      this.chat(`Error handling patrol command: ${error.message}`);
+      this.log.error(`Error handling patrol command: ${error.message}`);
+      this.chat(`Could not execute patrol command: ${error.message}`);
     }
   }
 
@@ -745,13 +1017,10 @@ class ProtectorBot extends BaseBot {
       }
       
       this.chat(`Following ${playerName} at distance ${followDistance}.`);
-      const success = await this.guardPlayer({ playerName, followDistance });
-      
-      if (!success) {
-        this.chat(`Failed to follow ${playerName}.`);
-      }
+      await this.guardPlayer({ playerName, followDistance });
     } catch (error) {
-      this.chat(`Error handling follow command: ${error.message}`);
+      this.log.error(`Error handling follow command: ${error.message}`);
+      this.chat(`Could not execute follow command: ${error.message}`);
     }
   }
 
@@ -833,13 +1102,11 @@ class ProtectorBot extends BaseBot {
    */
   _handleStopProtectionCommand(username) {
     try {
-      if (this.stopProtection()) {
-        this.chat('Stopped all protection activities.');
-      } else {
-        this.chat('Failed to stop protection activities.');
-      }
+      this.stopProtection();
+      this.chat('Stopped all protection activities.');
     } catch (error) {
-      this.chat(`Error stopping protection: ${error.message}`);
+      this.log.error(`Error stopping protection: ${error.message}`);
+      this.chat(`Could not stop protection: ${error.message}`);
     }
   }
 
@@ -878,6 +1145,24 @@ class ProtectorBot extends BaseBot {
     };
     
     sendNextMessage();
+  }
+
+  /**
+   * Stop attacking current target
+   * @returns {boolean} - Whether operation was successful
+   */
+  stopAttacking() {
+    try {
+      if (this.bot && this.bot.pvp) {
+        this.bot.pvp.stop();
+      }
+      
+      this.targetEntity = null;
+      return true;
+    } catch (error) {
+      this.log.warn(`Failed to stop attacking: ${error.message}`);
+      return false;
+    }
   }
 }
 

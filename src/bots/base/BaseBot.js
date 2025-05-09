@@ -111,9 +111,14 @@ class BaseBot extends EventEmitter {
       if (target.position) {
         // Target is an entity with a position property
         position = target.position;
+        // Store the entity for continuous tracking
+        this.lookingAtEntity = target;
       } else if (target.x !== undefined && target.y !== undefined && target.z !== undefined) {
         // Target is a position object with x, y, z coordinates
         position = target;
+        // Set fixed position for continuous tracking
+        this.lookingAtPos = new Vec3(position.x, position.y, position.z);
+        this.lookingAtEntity = null;
       } else {
         throw new Error('Invalid target to look at');
       }
@@ -125,6 +130,7 @@ class BaseBot extends EventEmitter {
       
       // Look at position
       await this.bot.lookAt(position);
+      
       this.log.info(`Looking at ${position.x.toFixed(1)}, ${position.y.toFixed(1)}, ${position.z.toFixed(1)}`);
       return true;
     } catch (error) {
@@ -348,10 +354,19 @@ class BaseBot extends EventEmitter {
     });
     
     // Handle server connection events
-    this.bot.on('kicked', (reason) => {
-      this.log.warn(`Bot was kicked: ${reason}`);
-      this.active = false;
-      this.emit('kicked', { reason });
+    this.bot.on('kicked', (reason, loggedIn) => {
+      try {
+        // Properly log the kicked reason as string, handling JSON objects
+        let readableReason = reason;
+        if (typeof reason === 'object') {
+          readableReason = JSON.stringify(reason);
+        }
+        this.log.warn(`Bot was kicked: ${readableReason}`);
+        this.active = false;
+        this.emit('kicked', { reason: readableReason });
+      } catch (error) {
+        this.log.error(`Error handling kicked event: ${error.message}`);
+      }
     });
     
     this.bot.on('error', (error) => {
@@ -377,6 +392,25 @@ class BaseBot extends EventEmitter {
         this.log.debug(`Inventory update: ${oldItem?.name || 'empty'} -> ${newItem?.name || 'empty'}`);
       }
     });
+    
+    // Setup continuous looking with physicsTick
+    this.bot.on('physicsTick', () => {
+      try {
+        // Process entity tracking for looking
+        if (this.lookingAtEntity && this.lookingAtEntity.position) {
+          this.bot.lookAt(this.lookingAtEntity.position).catch(err => {
+            this.log.debug(`Look error: ${err.message}`);
+          });
+        } else if (this.lookingAtPos) {
+          this.bot.lookAt(this.lookingAtPos).catch(err => {
+            this.log.debug(`Look error: ${err.message}`);
+          });
+        }
+      } catch (error) {
+        // Don't let errors in physicsTick crash the bot
+        this.log.debug(`Error in physicsTick: ${error.message}`);
+      }
+    });
   }
 
   /**
@@ -389,7 +423,7 @@ class BaseBot extends EventEmitter {
     
     try {
       const player = this.bot.players[username];
-      if (player && player.entity) {
+      if (player && player.entity && player.entity.position) {
         await this.lookAt(player.entity);
       }
     } catch (error) {
@@ -452,146 +486,15 @@ class BaseBot extends EventEmitter {
         await this.lookAt(player.entity);
         this.chat(`Looking at you, ${username}!`);
       } else {
-        this.chat(`I can't see you, ${username}.`);
-      }
-    } else if (args.length === 3) {
-      // Look at specific coordinates
-      try {
-        const x = parseFloat(args[0]);
-        const y = parseFloat(args[1]);
-        const z = parseFloat(args[2]);
-        
-        if (isNaN(x) || isNaN(y) || isNaN(z)) {
-          this.chat('Invalid coordinates. Usage: look <x> <y> <z>');
-          return;
-        }
-        
-        await this.lookAt({ x, y, z });
-        this.chat(`Looking at coordinates (${x}, ${y}, ${z})`);
-      } catch (error) {
-        this.chat(`Error looking at coordinates: ${error.message}`);
-      }
-    } else if (args.length === 1) {
-      // Look at another player
-      const targetUsername = args[0];
-      const targetPlayer = this.bot.players[targetUsername];
-      
-      if (targetPlayer && targetPlayer.entity) {
-        await this.lookAt(targetPlayer.entity);
-        this.chat(`Looking at ${targetUsername}.`);
-      } else {
-        this.chat(`I can't see ${targetUsername}.`);
+        this.chat(`I'm sorry, I can't see you right now.`);
       }
     } else {
-      this.chat('Usage: look [player] or look <x> <y> <z>');
+      // Look at a specific position
+      const position = args.map(Number);
+      await this.lookAt({ x: position[0], y: position[1], z: position[2] });
+      this.chat(`Looking at position: ${position.join(', ')}`);
     }
-  }
-
-  /**
-   * Go to a player
-   * @private
-   * @param {string} username - Username of the player
-   */
-  async _goToPlayer(username) {
-    try {
-      const player = this.bot.players[username];
-      if (!player || !player.entity) {
-        this.chat(`I can't see you, ${username}.`);
-        return;
-      }
-      
-      this.chat(`Coming to you, ${username}!`);
-      await this.goTo(player.entity.position, 2);
-      this.chat(`I've arrived, ${username}!`);
-    } catch (error) {
-      this.chat(`Error coming to you: ${error.message}`);
-    }
-  }
-
-  /**
-   * Stop current task
-   * @private
-   * @param {string} username - Username of the player
-   */
-  _stopCurrentTask(username) {
-    if (this.currentTask) {
-      const previousTask = this.currentTask;
-      
-      if (this.bot.pathfinder.isMoving()) {
-        this.bot.pathfinder.stop();
-      }
-      
-      this.currentTask = null;
-      this.chat(`Stopped task: ${previousTask}`);
-    } else {
-      this.chat('I\'m not doing anything right now.');
-    }
-  }
-
-  /**
-   * Send status information to player
-   * @private
-   * @param {string} username - Username of the player
-   */
-  _respondWithStatus(username) {
-    const status = this.getStatus();
-    const position = status.position;
-    
-    let statusText = `Status: ${status.status}`;
-    if (status.currentTask) statusText += `, Task: ${status.currentTask}`;
-    
-    if (position) {
-      statusText += `, Position: ${Math.floor(position.x)}, ${Math.floor(position.y)}, ${Math.floor(position.z)}`;
-    }
-    
-    statusText += `, Health: ${status.health}/20, Food: ${status.food}/20`;
-    
-    this.chat(statusText);
-  }
-  
-  /**
-   * Get inventory status (space used, etc)
-   * @private
-   * @returns {Object} - Inventory status
-   */
-  _getInventoryStatus() {
-    if (!this.bot || !this.bot.inventory) {
-      return { full: 0, slots: { total: 0, used: 0, free: 0 } };
-    }
-    
-    const items = this.bot.inventory.items();
-    const usedSlots = items.length;
-    const totalSlots = 36; // Inventory slots (excluding armor and offhand)
-    const freeSlots = totalSlots - usedSlots;
-    const fullPercentage = Math.floor((usedSlots / totalSlots) * 100);
-    
-    return {
-      full: fullPercentage,
-      slots: {
-        total: totalSlots,
-        used: usedSlots,
-        free: freeSlots
-      },
-      items: items.map(item => ({
-        name: item.name,
-        count: item.count
-      }))
-    };
-  }
-  
-  /**
-   * Set up the logger
-   * @private
-   * @returns {Object} - Logger object
-   */
-  _setupLogger() {
-    return {
-      info: (message) => console.log(`[${this.username}] INFO: ${message}`),
-      warn: (message) => console.warn(`[${this.username}] WARN: ${message}`),
-      error: (message) => console.error(`[${this.username}] ERROR: ${message}`),
-      debug: (message) => console.debug(`[${this.username}] DEBUG: ${message}`)
-    };
   }
 }
 
-module.exports = BaseBot; 
+module.exports = BaseBot;
