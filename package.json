@@ -1,0 +1,35 @@
+{
+  "name": "itayosbots",
+  "version": "1.0.0",
+  "description": "Advanced Minecraft bot system built on Mineflayer for automating various tasks through multiple cooperative bots with Discord integration",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node index.js"
+  },
+  "keywords": [
+    "minecraft",
+    "bot",
+    "automation",
+    "mineflayer",
+    "discord"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "discord.js": "^14.19.3",
+    "fs-extra": "^11.3.0",
+    "mineflayer": "^4.27.0",
+    "mineflayer-armor-manager": "^2.0.1",
+    "mineflayer-auto-eat": "^5.0.1",
+    "mineflayer-blockfinder": "^0.0.7",
+    "mineflayer-collectblock": "^1.6.0",
+    "mineflayer-pvp": "^1.3.2",
+    "mineflayer-tool": "^1.2.0",
+    "mineflayer-totem-auto": "^1.1.3",
+    "mineflayer-utils": "^0.1.4"
+  }
+}
