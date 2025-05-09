@@ -39,7 +39,8 @@ async function initSystem() {
     const discordIntegration = await createDiscordIntegration({
       handleCommand: commandSystem.handleCommand,
       botManager: commandSystem.botManager,
-      dataStore: sharedDataSystem.dataStore
+      dataStore: sharedDataSystem.dataStore,
+      commandParser: commandSystem.commandParser
     });
     
     // Add event handler for Minecraft chat messages

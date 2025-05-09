@@ -4,7 +4,7 @@
  * This class handles communication with Discord, including commands and status reporting.
  */
 
-const { Client, IntentsBitField, EmbedBuilder } = require('discord.js');
+const { Client, IntentsBitField, EmbedBuilder, REST, Routes, ApplicationCommandOptionType } = require('discord.js');
 const { discordConfig, embedTemplates } = require('./discordConfig');
 
 class DiscordBot {
@@ -21,10 +21,12 @@ class DiscordBot {
     this.botManager = botManager;
     this.dataStore = dataStore;
     this.channelId = discordConfig.channelId;
+    this.commands = new Map();
+    this.commandData = [];
     
     // Bind methods
     this._onReady = this._onReady.bind(this);
-    this._onMessage = this._onMessage.bind(this);
+    this._onInteraction = this._onInteraction.bind(this);
     this._handleBotEvents = this._handleBotEvents.bind(this);
   }
   
@@ -50,7 +52,7 @@ class DiscordBot {
       
       // Set up event handlers
       this.client.on('ready', this._onReady);
-      this.client.on('messageCreate', this._onMessage);
+      this.client.on('interactionCreate', this._onInteraction);
       
       // Set up bot event handlers
       this._handleBotEvents();
@@ -63,6 +65,105 @@ class DiscordBot {
       console.error('Discord connection error:', error);
       return false;
     }
+  }
+  
+  /**
+   * Register slash commands from the command parser
+   * @param {Object} commandParser - The command parser instance
+   */
+  async registerSlashCommands(commandParser) {
+    if (!this.client) return false;
+    
+    try {
+      const allCommands = commandParser.getCommands();
+      const slashCommands = [];
+      
+      // Convert commands to Discord slash command format
+      Object.entries(allCommands).forEach(([category, commands]) => {
+        commands.forEach(cmd => {
+          // Only include commands that are available on Discord
+          const fullCmd = commandParser.commands.get(cmd.name);
+          if (!fullCmd || !fullCmd.platforms.includes('discord')) return;
+          
+          // Create slash command data
+          const slashCmd = {
+            name: cmd.name,
+            description: cmd.description || 'No description',
+            options: this._generateCommandOptions(fullCmd)
+          };
+          
+          slashCommands.push(slashCmd);
+          this.commands.set(cmd.name, fullCmd);
+        });
+      });
+      
+      this.commandData = slashCommands;
+      
+      // Register commands with Discord API
+      const rest = new REST({ version: '10' }).setToken(discordConfig.token);
+      
+      console.log('Started refreshing application (/) commands.');
+      
+      await rest.put(
+        Routes.applicationCommands(this.client.user.id),
+        { body: slashCommands },
+      );
+      
+      console.log('Successfully reloaded application (/) commands.');
+      return true;
+    } catch (error) {
+      console.error('Error registering slash commands:', error);
+      return false;
+    }
+  }
+  
+  /**
+   * Generate command options based on command usage
+   * @private
+   * @param {Object} command - Command object
+   * @returns {Array} - Array of command options
+   */
+  _generateCommandOptions(command) {
+    // Default options that most commands will need
+    const options = [];
+    
+    // Extract parameters from usage string
+    // Example: #goto [bot_name] [x] [y] [z]
+    const usageMatch = command.usage.match(/\[([^\]]+)\]/g);
+    
+    if (!usageMatch) return options;
+    
+    usageMatch.forEach((param, index) => {
+      const paramName = param.replace(/[\[\]]/g, '').toLowerCase();
+      
+      // Skip adding bot_name for commands that apply to all bots
+      if (paramName === 'bot_name' && command.name === 'list') return;
+      
+      let option = {
+        name: paramName,
+        description: `The ${paramName.replace('_', ' ')} parameter`,
+        required: index === 0, // First parameter is usually required
+        type: ApplicationCommandOptionType.String
+      };
+      
+      // Determine option type based on parameter name
+      if (paramName.match(/^[xyz]$/i)) {
+        option.type = ApplicationCommandOptionType.Number;
+        option.description = `The ${paramName.toUpperCase()} coordinate`;
+      } else if (paramName === 'amount') {
+        option.type = ApplicationCommandOptionType.Integer;
+      } else if (paramName === 'blockname' || paramName === 'itemname') {
+        option.description = `The name of the ${paramName === 'blockname' ? 'block' : 'item'}`;
+      } else if (paramName === 'playername') {
+        option.description = 'The name of the player';
+      } else if (paramName === 'filename') {
+        option.description = 'The name of the file';
+      }
+      
+      options.push(option);
+    });
+    
+    return options;
   }
   
   /**
@@ -180,30 +281,78 @@ class DiscordBot {
   }
   
   /**
-   * Handler for Discord message events
+   * Handler for Discord interaction events
    * @private
-   * @param {Message} message - Discord message
+   * @param {Interaction} interaction - Discord interaction
    */
-  async _onMessage(message) {
-    // Ignore bot messages
-    if (message.author.bot) return;
+  async _onInteraction(interaction) {
+    if (!interaction.isCommand()) return;
     
-    // Only handle messages in designated channel
-    if (message.channel.id !== this.channelId) return;
+    // Only handle commands in designated channel if channel ID is set
+    if (this.channelId && interaction.channelId !== this.channelId) {
+      await interaction.reply({ 
+        content: `Commands can only be used in the designated channel <#${this.channelId}>`, 
+        ephemeral: true 
+      });
+      return;
+    }
     
-    // Try to handle as command
-    const result = await this.handleCommand({
-      message: message.content,
-      platform: 'discord',
-      sender: message.author.id,
-      context: { message, discord: this }
+    const { commandName } = interaction;
+    const command = this.commands.get(commandName);
+    
+    if (!command) {
+      await interaction.reply({ 
+        content: `Command not found: ${commandName}`, 
+        ephemeral: true 
+      });
+      return;
+    }
+    
+    try {
+      // Defer reply to give time for processing
+      await interaction.deferReply();
+      
+      // Convert interaction options to args format
+      const args = this._optionsToArgs(interaction.options);
+      
+      // Execute command
+      const result = await this.handleCommand({
+        message: `#${commandName} ${args.join(' ')}`, // Format compatible with existing command system
+        platform: 'discord',
+        sender: interaction.user.id,
+        context: { interaction, discord: this }
+      });
+      
+      // Handle command result
+      await this._handleInteractionResult(interaction, result);
+    } catch (error) {
+      console.error('Error handling interaction:', error);
+      
+      // If we've already deferred, editReply instead of reply
+      const replyMethod = interaction.deferred ? 'editReply' : 'reply';
+      
+      await interaction[replyMethod]({ 
+        content: `Error executing command: ${error.message}`, 
+        ephemeral: true 
+      });
+    }
+  }
+  
+  /**
+   * Convert interaction options to args array
+   * @private
+   * @param {CommandInteractionOptionResolver} options - Interaction options
+   * @returns {Array<string>} - Arguments array
+   */
+  _optionsToArgs(options) {
+    const args = [];
+    const resolvedOptions = options.data;
+    
+    resolvedOptions.forEach(option => {
+      args.push(option.value.toString());
     });
     
-    // If not a command or command failed, ignore
-    if (!result || !result.success) return;
-    
-    // Handle command result
-    await this._handleCommandResult(message, result);
+    return args;
   }
   
   /**
@@ -239,188 +388,95 @@ class DiscordBot {
   }
   
   /**
-   * Handle command result
+   * Handle command result for interactions
    * @private
-   * @param {Message} message - Discord message
+   * @param {CommandInteraction} interaction - Discord interaction
    * @param {Object} result - Command result
    */
-  async _handleCommandResult(message, result) {
-    if (!result.result) return;
+  async _handleInteractionResult(interaction, result) {
+    if (!result || !result.success) {
+      await interaction.editReply({
+        content: result?.error || 'An error occurred executing the command',
+      });
+      return;
+    }
     
-    const { type } = result.result;
+    if (!result.result) {
+      await interaction.editReply({ content: 'Command executed successfully' });
+      return;
+    }
     
-    // Different handlers based on result type
+    const { type, data } = result.result;
+    
     switch (type) {
+      case 'text':
+        await interaction.editReply({ content: data });
+        break;
+        
+      case 'status':
+        if (typeof data === 'string') {
+          // Single bot status
+          await this.sendBotStatus(data);
+          await interaction.editReply({ content: `Status for ${data} has been posted in the channel` });
+        } else {
+          // Multiple bot status or detailed status
+          const embed = this._generateStatusEmbed(data);
+          await interaction.editReply({ embeds: [embed] });
+        }
+        break;
+        
+      case 'list':
+        const listEmbed = embedTemplates.botList(data);
+        await interaction.editReply({ embeds: [listEmbed] });
+        break;
+        
       case 'help':
-        await this._sendHelpEmbed(message, result.result.commands);
-        break;
-        
-      case 'command-help':
-        await this._sendCommandHelpEmbed(message, result.result.command);
-        break;
-        
-      case 'bot-help':
-        await this._sendBotHelpEmbed(message, result.result);
-        break;
-        
-      case 'bot-list':
-        await this._sendBotListEmbed(message, result.result.bots);
-        break;
-        
-      case 'status-bot':
-        await this._sendStatusEmbed(message, result.result.status);
-        break;
-        
-      case 'status-all':
-        await this._sendAllStatusEmbed(message, result.result.bots);
-        break;
-        
-      case 'stop-bot':
-        await message.reply(`Bot ${result.result.botName} has been stopped`);
-        break;
-        
-      case 'stop-all':
-        await message.reply(`All bots stopped (${result.result.count} bots)`);
-        break;
-        
-      case 'login':
-      case 'login-multiple':
-        await message.reply(`Bot(s) created successfully`);
+        if (typeof data === 'string') {
+          // Help for specific command or bot
+          const helpEmbed = data.startsWith('bot:') 
+            ? embedTemplates.botHelp(data.substring(4))
+            : embedTemplates.commandHelp(data);
+          await interaction.editReply({ embeds: [helpEmbed] });
+        } else {
+          // General help
+          const helpEmbed = embedTemplates.help(data);
+          await interaction.editReply({ embeds: [helpEmbed] });
+        }
         break;
         
       default:
-        await message.reply(`Command executed successfully`);
+        // Default success message
+        await interaction.editReply({ content: 'Command executed successfully' });
     }
   }
   
   /**
-   * Send help embed
+   * Generate a status embed from data
    * @private
-   * @param {Message} message - Discord message
-   * @param {Object} commands - Commands object grouped by category
+   * @param {Object} data - Status data
+   * @returns {EmbedBuilder} - Generated embed
    */
-  async _sendHelpEmbed(message, commands) {
-    const embed = embedTemplates.help(commands);
-    message.channel.send({ embeds: [embed] });
-  }
-  
-  /**
-   * Send command help embed
-   * @private
-   * @param {Message} message - Discord message
-   * @param {Object} command - Command information
-   */
-  async _sendCommandHelpEmbed(message, command) {
+  _generateStatusEmbed(data) {
+    // If this is a single bot's status
+    if (data.botName) {
+      return embedTemplates.status(data.botName, data);
+    }
+    
+    // If this is a collection of bots
     const embed = new EmbedBuilder()
       .setColor('#0099FF')
-      .setTitle(`Command: ${command.name}`)
-      .setDescription(command.description)
-      .addFields(
-        { name: 'Usage', value: command.usage },
-        { name: 'Category', value: command.group }
-      );
-      
-    message.channel.send({ embeds: [embed] });
-  }
-  
-  /**
-   * Send bot help embed
-   * @private
-   * @param {Message} message - Discord message
-   * @param {Object} data - Bot help data
-   */
-  async _sendBotHelpEmbed(message, data) {
-    const { botName, botType, commands } = data;
+      .setTitle('Bot Status Report')
+      .setDescription('Current status of all bots')
+      .setTimestamp();
     
-    const embed = new EmbedBuilder()
-      .setColor('#0099FF')
-      .setTitle(`Help for ${botName} (${botType})`)
-      .setDescription(`Available commands for ${botType} bots:`);
-      
-    // Add commands
-    if (commands && commands.length > 0) {
-      const commandText = commands.map(cmd => `\`${cmd.usage}\`: ${cmd.description}`).join('\n');
-      embed.addFields({ name: `${botType} Commands`, value: commandText });
-    } else {
-      embed.addFields({ name: 'Commands', value: 'No specific commands available' });
-    }
-    
-    message.channel.send({ embeds: [embed] });
-  }
-  
-  /**
-   * Send bot list embed
-   * @private
-   * @param {Message} message - Discord message
-   * @param {Array} bots - List of bots
-   */
-  async _sendBotListEmbed(message, bots) {
-    const embed = new EmbedBuilder()
-      .setColor('#00FF00')
-      .setTitle('Active Bots')
-      .setDescription(`Total: ${bots.length} bot(s)`);
-      
-    // Group by type
-    const botsByType = {};
-    
-    bots.forEach(bot => {
-      if (!botsByType[bot.type]) {
-        botsByType[bot.type] = [];
-      }
-      
-      botsByType[bot.type].push(bot);
+    Object.entries(data).forEach(([botName, botData]) => {
+      embed.addFields({
+        name: botName,
+        value: `Status: ${botData.status || 'Unknown'}\nLocation: X:${botData.position?.x || 0}, Y:${botData.position?.y || 0}, Z:${botData.position?.z || 0}\nTask: ${botData.currentTask || 'None'}`
+      });
     });
     
-    // Add fields for each type
-    for (const [type, typeBots] of Object.entries(botsByType)) {
-      const botList = typeBots.map(bot => 
-        `${bot.name} (${bot.status}${bot.task ? `: ${bot.task}` : ''})`
-      ).join('\n');
-      
-      embed.addFields({ name: type, value: botList || 'None' });
-    }
-    
-    message.channel.send({ embeds: [embed] });
-  }
-  
-  /**
-   * Send status embed
-   * @private
-   * @param {Message} message - Discord message
-   * @param {Object} status - Bot status
-   */
-  async _sendStatusEmbed(message, status) {
-    const embed = embedTemplates.status(status.username, status);
-    message.channel.send({ embeds: [embed] });
-  }
-  
-  /**
-   * Send all bots status embed
-   * @private
-   * @param {Message} message - Discord message
-   * @param {Array} bots - All bot statuses
-   */
-  async _sendAllStatusEmbed(message, bots) {
-    const embed = new EmbedBuilder()
-      .setColor('#00FF00')
-      .setTitle('All Bots Status')
-      .setDescription(`Total: ${bots.length} bot(s)`);
-      
-    // Add each bot as a field
-    bots.forEach(bot => {
-      const pos = bot.position ? `X:${bot.position.x.toFixed(0)}, Y:${bot.position.y.toFixed(0)}, Z:${bot.position.z.toFixed(0)}` : 'Unknown';
-      
-      const statusText = [
-        `Status: ${bot.status || 'Unknown'}`,
-        `Position: ${pos}`,
-        `Health: ${bot.health || 'N/A'}`,
-        `Task: ${bot.currentTask || 'None'}`
-      ].join('\n');
-      
-      embed.addFields({ name: `${bot.username} (${bot.type})`, value: statusText });
-    });
-    
-    message.channel.send({ embeds: [embed] });
+    return embed;
   }
 }
 

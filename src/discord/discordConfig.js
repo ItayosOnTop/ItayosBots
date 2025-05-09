@@ -63,9 +63,71 @@ const embedTemplates = {
     
     // Add fields for each command category
     Object.entries(commands).forEach(([category, commandList]) => {
-      const commandText = commandList.map(cmd => `\`${mainConfig.system.commandPrefix}${cmd.name}\`: ${cmd.description}`).join('\n');
+      const commandText = commandList.map(cmd => `\`/${cmd.name}\`: ${cmd.description}`).join('\n');
       embed.addFields({ name: category, value: commandText });
     });
+    
+    return embed;
+  },
+  
+  // Bot list embed
+  botList: (bots) => {
+    const embed = new EmbedBuilder()
+      .setColor('#00FF00')
+      .setTitle('Active Bots')
+      .setDescription(`Total: ${bots.length} bot(s)`);
+      
+    // Group by type
+    const botsByType = {};
+    
+    bots.forEach(bot => {
+      if (!botsByType[bot.type]) {
+        botsByType[bot.type] = [];
+      }
+      
+      botsByType[bot.type].push(bot);
+    });
+    
+    // Add fields for each type
+    for (const [type, typeBots] of Object.entries(botsByType)) {
+      const botList = typeBots.map(bot => 
+        `${bot.name} (${bot.status}${bot.task ? `: ${bot.task}` : ''})`
+      ).join('\n');
+      
+      embed.addFields({ name: type, value: botList || 'None' });
+    }
+    
+    return embed;
+  },
+  
+  // Command help embed
+  commandHelp: (command) => {
+    return new EmbedBuilder()
+      .setColor('#0099FF')
+      .setTitle(`Command: /${command.name}`)
+      .setDescription(command.description)
+      .addFields(
+        { name: 'Usage', value: command.usage.replace('#', '/') },
+        { name: 'Category', value: command.group }
+      );
+  },
+  
+  // Bot help embed
+  botHelp: (data) => {
+    const { botName, botType, commands } = data;
+    
+    const embed = new EmbedBuilder()
+      .setColor('#0099FF')
+      .setTitle(`Help for ${botName} (${botType})`)
+      .setDescription(`Available commands for ${botType} bots:`);
+      
+    // Add commands
+    if (commands && commands.length > 0) {
+      const commandText = commands.map(cmd => `\`/${cmd.name}\`: ${cmd.description}`).join('\n');
+      embed.addFields({ name: `${botType} Commands`, value: commandText });
+    } else {
+      embed.addFields({ name: 'Commands', value: 'No specific commands available' });
+    }
     
     return embed;
   }
